@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useState, type ComponentProps } from "react";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { ChatMessage, ContentBlock } from "../types.js";
 import { ToolBlock } from "./ToolBlock.js";
 
@@ -43,9 +45,7 @@ function AssistantMessage({ message }: { message: ChatMessage }) {
       <div className="flex items-start gap-3">
         <AssistantAvatar />
         <div className="flex-1 min-w-0">
-          <pre className="font-serif-assistant text-[15px] text-cc-fg whitespace-pre-wrap break-words leading-relaxed">
-            {message.content}
-          </pre>
+          <MarkdownContent text={message.content} />
         </div>
       </div>
     );
@@ -73,13 +73,111 @@ function AssistantAvatar() {
   );
 }
 
+function MarkdownContent({ text }: { text: string }) {
+  return (
+    <div className="markdown-body text-[15px] text-cc-fg leading-relaxed">
+      <Markdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          p: ({ children }) => (
+            <p className="mb-3 last:mb-0">{children}</p>
+          ),
+          strong: ({ children }) => (
+            <strong className="font-semibold text-cc-fg">{children}</strong>
+          ),
+          em: ({ children }) => (
+            <em className="italic">{children}</em>
+          ),
+          h1: ({ children }) => (
+            <h1 className="text-xl font-bold text-cc-fg mt-4 mb-2">{children}</h1>
+          ),
+          h2: ({ children }) => (
+            <h2 className="text-lg font-bold text-cc-fg mt-3 mb-2">{children}</h2>
+          ),
+          h3: ({ children }) => (
+            <h3 className="text-base font-semibold text-cc-fg mt-3 mb-1">{children}</h3>
+          ),
+          ul: ({ children }) => (
+            <ul className="list-disc pl-5 mb-3 space-y-1">{children}</ul>
+          ),
+          ol: ({ children }) => (
+            <ol className="list-decimal pl-5 mb-3 space-y-1">{children}</ol>
+          ),
+          li: ({ children }) => (
+            <li className="text-cc-fg">{children}</li>
+          ),
+          a: ({ href, children }) => (
+            <a href={href} target="_blank" rel="noopener noreferrer" className="text-cc-primary hover:underline">
+              {children}
+            </a>
+          ),
+          blockquote: ({ children }) => (
+            <blockquote className="border-l-2 border-cc-primary/30 pl-3 my-2 text-cc-muted italic">
+              {children}
+            </blockquote>
+          ),
+          hr: () => (
+            <hr className="border-cc-border my-4" />
+          ),
+          code: (props: ComponentProps<"code">) => {
+            const { children, className } = props;
+            const match = /language-(\w+)/.exec(className || "");
+            const isBlock = match || (typeof children === "string" && children.includes("\n"));
+
+            if (isBlock) {
+              const lang = match?.[1] || "";
+              return (
+                <div className="my-2 rounded-lg overflow-hidden border border-cc-border">
+                  {lang && (
+                    <div className="px-3 py-1.5 bg-cc-code-bg/80 border-b border-cc-border text-[10px] text-cc-muted font-mono-code uppercase tracking-wider">
+                      {lang}
+                    </div>
+                  )}
+                  <pre className="px-3 py-2.5 bg-cc-code-bg text-cc-code-fg text-[13px] font-mono-code leading-relaxed overflow-x-auto">
+                    <code>{children}</code>
+                  </pre>
+                </div>
+              );
+            }
+
+            return (
+              <code className="px-1 py-0.5 rounded bg-cc-code-bg/30 text-[13px] font-mono-code text-cc-primary">
+                {children}
+              </code>
+            );
+          },
+          pre: ({ children }) => <>{children}</>,
+          table: ({ children }) => (
+            <div className="overflow-x-auto my-2">
+              <table className="min-w-full text-sm border border-cc-border rounded-lg overflow-hidden">
+                {children}
+              </table>
+            </div>
+          ),
+          thead: ({ children }) => (
+            <thead className="bg-cc-code-bg/50">{children}</thead>
+          ),
+          th: ({ children }) => (
+            <th className="px-3 py-1.5 text-left text-xs font-semibold text-cc-fg border-b border-cc-border">
+              {children}
+            </th>
+          ),
+          td: ({ children }) => (
+            <td className="px-3 py-1.5 text-xs text-cc-fg border-b border-cc-border">
+              {children}
+            </td>
+          ),
+        }}
+      >
+        {text}
+      </Markdown>
+    </div>
+  );
+}
+
 function ContentBlockRenderer({ block }: { block: ContentBlock }) {
   if (block.type === "text") {
-    return (
-      <div className="font-serif-assistant text-[15px] text-cc-fg whitespace-pre-wrap break-words leading-relaxed">
-        {renderTextWithCodeBlocks(block.text)}
-      </div>
-    );
+    return <MarkdownContent text={block.text} />;
   }
 
   if (block.type === "thinking") {
@@ -135,78 +233,4 @@ function ThinkingBlock({ text }: { text: string }) {
       )}
     </div>
   );
-}
-
-function renderTextWithCodeBlocks(text: string): React.ReactNode[] {
-  const parts: React.ReactNode[] = [];
-  const codeBlockRegex = /```(\w*)\n?([\s\S]*?)```/g;
-  let lastIndex = 0;
-  let match;
-
-  while ((match = codeBlockRegex.exec(text)) !== null) {
-    // Text before code block
-    if (match.index > lastIndex) {
-      parts.push(
-        <span key={`text-${lastIndex}`}>
-          {renderInlineCode(text.slice(lastIndex, match.index))}
-        </span>
-      );
-    }
-
-    const lang = match[1];
-    const code = match[2].trimEnd();
-    parts.push(
-      <div key={`code-${match.index}`} className="my-2 rounded-lg overflow-hidden border border-cc-border">
-        {lang && (
-          <div className="px-3 py-1.5 bg-cc-code-bg/80 border-b border-cc-border text-[10px] text-cc-muted font-mono-code uppercase tracking-wider">
-            {lang}
-          </div>
-        )}
-        <pre className="px-3 py-2.5 bg-cc-code-bg text-cc-code-fg text-[13px] font-mono-code leading-relaxed overflow-x-auto">
-          {code}
-        </pre>
-      </div>
-    );
-
-    lastIndex = match.index + match[0].length;
-  }
-
-  // Remaining text
-  if (lastIndex < text.length) {
-    parts.push(
-      <span key={`text-${lastIndex}`}>
-        {renderInlineCode(text.slice(lastIndex))}
-      </span>
-    );
-  }
-
-  return parts.length > 0 ? parts : [<span key="full">{text}</span>];
-}
-
-function renderInlineCode(text: string): React.ReactNode[] {
-  const parts: React.ReactNode[] = [];
-  const inlineRegex = /`([^`]+)`/g;
-  let lastIndex = 0;
-  let match;
-
-  while ((match = inlineRegex.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      parts.push(text.slice(lastIndex, match.index));
-    }
-    parts.push(
-      <code
-        key={`inline-${match.index}`}
-        className="px-1 py-0.5 rounded bg-cc-code-bg/30 text-[13px] font-mono-code text-cc-primary"
-      >
-        {match[1]}
-      </code>
-    );
-    lastIndex = match.index + match[0].length;
-  }
-
-  if (lastIndex < text.length) {
-    parts.push(text.slice(lastIndex));
-  }
-
-  return parts;
 }
