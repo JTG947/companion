@@ -14,8 +14,8 @@ vi.mock("node:child_process", () => ({ execSync: mockExecSync }));
 
 // Mock fs operations for worktree guardrails (CLAUDE.md in .claude dirs)
 const mockMkdirSync = vi.hoisted(() => vi.fn());
-const mockExistsSync = vi.hoisted(() => vi.fn(() => false));
-const mockReadFileSync = vi.hoisted(() => vi.fn(() => ""));
+const mockExistsSync = vi.hoisted(() => vi.fn((..._args: any[]) => false));
+const mockReadFileSync = vi.hoisted(() => vi.fn((..._args: any[]) => ""));
 const mockWriteFileSync = vi.hoisted(() => vi.fn());
 vi.mock("node:fs", async (importOriginal) => {
   const actual = (await importOriginal()) as any;

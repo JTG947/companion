@@ -140,7 +140,7 @@ describe("POST /api/sessions/create", () => {
     const res = await app.request("/api/sessions/create", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cwd: "/repo", branch: "feat-branch" }),
+      body: JSON.stringify({ cwd: "/repo", branch: "feat-branch", useWorktree: true }),
     });
 
     expect(res.status).toBe(200);
