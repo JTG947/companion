@@ -353,6 +353,7 @@ describe("ensureWorktree", () => {
     const result = gitUtils.ensureWorktree("/repo", "feat/existing");
     expect(result.worktreePath).toBe("/existing/path");
     expect(result.branch).toBe("feat/existing");
+    expect(result.actualBranch).toBe("feat/existing");
     expect(result.isNew).toBe(false);
     // Should NOT have called worktree add
     const addCalls = mockExecSync.mock.calls.filter((c: unknown[]) =>
@@ -379,6 +380,7 @@ describe("ensureWorktree", () => {
 
     const result = gitUtils.ensureWorktree("/repo", "feat/local");
     expect(result.worktreePath).toBe("/fake/home/.companion/worktrees/repo/feat--local");
+    expect(result.actualBranch).toBe("feat/local");
     expect(result.isNew).toBe(false);
 
     const addCall = mockExecSync.mock.calls.find((c: unknown[]) =>
@@ -409,6 +411,7 @@ describe("ensureWorktree", () => {
     mockExistsSync.mockReturnValue(false);
 
     const result = gitUtils.ensureWorktree("/repo", "feat/remote");
+    expect(result.actualBranch).toBe("feat/remote");
     expect(result.isNew).toBe(false);
 
     const addCall = mockExecSync.mock.calls.find((c: unknown[]) =>
@@ -439,6 +442,7 @@ describe("ensureWorktree", () => {
     const result = gitUtils.ensureWorktree("/repo", "feat/new", { baseBranch: "develop" });
     expect(result.isNew).toBe(true);
     expect(result.branch).toBe("feat/new");
+    expect(result.actualBranch).toBe("feat/new");
 
     const addCall = mockExecSync.mock.calls.find((c: unknown[]) =>
       (c[0] as string).includes("worktree add -b"),
@@ -498,7 +502,9 @@ describe("ensureWorktree", () => {
       if (cmd.includes("worktree list --porcelain")) return porcelain;
       if (cmd.includes("status --porcelain")) return "";
       if (cmd.includes("rev-parse HEAD")) return "abc123";
-      if (cmd.includes("worktree add --detach")) return "";
+      // generateUniqueWorktreeBranch checks for existing branches
+      if (cmd.includes("rev-parse --verify refs/heads/main-wt-2")) throw new Error("not found");
+      if (cmd.includes("worktree add -b")) return "";
       throw new Error(`Unmocked: ${cmd}`);
     });
     // Target path doesn't exist yet
@@ -508,11 +514,14 @@ describe("ensureWorktree", () => {
     // Should NOT return the main repo path
     expect(result.worktreePath).not.toBe("/repo");
     expect(result.worktreePath).toBe("/fake/home/.companion/worktrees/repo/main");
-    // Should create a detached worktree
+    expect(result.branch).toBe("main");
+    expect(result.actualBranch).toBe("main-wt-2");
+    // Should create a branch-tracking worktree
     const addCall = mockExecSync.mock.calls.find((c: unknown[]) =>
-      (c[0] as string).includes("worktree add --detach"),
+      (c[0] as string).includes("worktree add -b"),
     );
     expect(addCall).toBeDefined();
+    expect((addCall![0] as string)).toContain("main-wt-2");
     expect((addCall![0] as string)).toContain("abc123");
   });
 
@@ -538,7 +547,7 @@ describe("ensureWorktree", () => {
     expect(result.worktreePath).toBe(`${basePath}-3`);
   });
 
-  it("creates detached worktree when forceNew=true and worktree already exists", () => {
+  it("creates branch-tracking worktree when forceNew=true and worktree already exists", () => {
     const porcelain = [
       "worktree /repo",
       "HEAD abc123",
@@ -554,7 +563,9 @@ describe("ensureWorktree", () => {
       if (cmd.includes("worktree list --porcelain")) return porcelain;
       if (cmd.includes("status --porcelain")) return "";
       if (cmd.includes("rev-parse HEAD")) return "def456";
-      if (cmd.includes("worktree add --detach")) return "";
+      // generateUniqueWorktreeBranch checks
+      if (cmd.includes("rev-parse --verify refs/heads/feat/existing-wt-2")) throw new Error("not found");
+      if (cmd.includes("worktree add -b")) return "";
       throw new Error(`Unmocked: ${cmd}`);
     });
     // Target path doesn't exist yet
@@ -563,11 +574,40 @@ describe("ensureWorktree", () => {
     const result = gitUtils.ensureWorktree("/repo", "feat/existing", { forceNew: true });
     expect(result.worktreePath).toBe("/fake/home/.companion/worktrees/repo/feat--existing");
     expect(result.branch).toBe("feat/existing");
+    expect(result.actualBranch).toBe("feat/existing-wt-2");
 
     const addCall = mockExecSync.mock.calls.find((c: unknown[]) =>
-      (c[0] as string).includes("worktree add --detach"),
+      (c[0] as string).includes("worktree add -b"),
     );
     expect(addCall).toBeDefined();
+    expect((addCall![0] as string)).toContain("feat/existing-wt-2");
+  });
+});
+
+// ─── generateUniqueWorktreeBranch ────────────────────────────────────────────
+
+describe("generateUniqueWorktreeBranch", () => {
+  it("returns -wt-2 when no suffixed branches exist", () => {
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes("rev-parse --verify refs/heads/main-wt-2")) throw new Error("not found");
+      throw new Error(`Unmocked: ${cmd}`);
+    });
+
+    const result = gitUtils.generateUniqueWorktreeBranch("/repo", "main");
+    expect(result).toBe("main-wt-2");
+  });
+
+  it("increments suffix until a unique name is found", () => {
+    mockExecSync.mockImplementation((cmd: string) => {
+      // -wt-2 and -wt-3 already exist
+      if (cmd.includes("rev-parse --verify refs/heads/feat/x-wt-2")) return "abc";
+      if (cmd.includes("rev-parse --verify refs/heads/feat/x-wt-3")) return "def";
+      if (cmd.includes("rev-parse --verify refs/heads/feat/x-wt-4")) throw new Error("not found");
+      throw new Error(`Unmocked: ${cmd}`);
+    });
+
+    const result = gitUtils.generateUniqueWorktreeBranch("/repo", "feat/x");
+    expect(result).toBe("feat/x-wt-4");
   });
 });
 
@@ -586,6 +626,40 @@ describe("removeWorktree", () => {
       (c[0] as string).includes("worktree prune"),
     );
     expect(pruneCalls).toHaveLength(1);
+  });
+
+  it("deletes branchToDelete after pruning a missing worktree", () => {
+    mockExistsSync.mockReturnValue(false);
+    mockGitCommands({
+      "worktree prune": "",
+      "branch -D main-wt-2": "",
+    });
+
+    const result = gitUtils.removeWorktree("/repo", "/gone/path", { branchToDelete: "main-wt-2" });
+    expect(result.removed).toBe(true);
+
+    const branchDeleteCalls = mockExecSync.mock.calls.filter((c: unknown[]) =>
+      (c[0] as string).includes("branch -D main-wt-2"),
+    );
+    expect(branchDeleteCalls).toHaveLength(1);
+  });
+
+  it("deletes branchToDelete after successful worktree removal", () => {
+    mockExistsSync.mockReturnValue(true);
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes("status --porcelain")) return "";
+      if (cmd.includes("worktree remove")) return "";
+      if (cmd.includes("branch -D feat-wt-3")) return "";
+      throw new Error(`Unmocked: ${cmd}`);
+    });
+
+    const result = gitUtils.removeWorktree("/repo", "/wt/path", { branchToDelete: "feat-wt-3" });
+    expect(result.removed).toBe(true);
+
+    const branchDeleteCalls = mockExecSync.mock.calls.filter((c: unknown[]) =>
+      (c[0] as string).includes("branch -D feat-wt-3"),
+    );
+    expect(branchDeleteCalls).toHaveLength(1);
   });
 
   it("refuses to remove dirty worktree without force", () => {

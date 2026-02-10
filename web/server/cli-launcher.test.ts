@@ -201,6 +201,7 @@ describe("launch", () => {
         isWorktree: true,
         repoRoot: "/tmp/main-repo",
         branch: "feature-branch",
+        actualBranch: "feature-branch",
         worktreePath: "/tmp/worktrees/feature-branch",
       },
     });
@@ -208,6 +209,7 @@ describe("launch", () => {
     expect(info.isWorktree).toBe(true);
     expect(info.repoRoot).toBe("/tmp/main-repo");
     expect(info.branch).toBe("feature-branch");
+    expect(info.actualBranch).toBe("feature-branch");
   });
 
   it("injects worktree guardrails when isWorktree=true", () => {
@@ -224,6 +226,7 @@ describe("launch", () => {
         isWorktree: true,
         repoRoot: "/tmp/main-repo",
         branch: "feature-x",
+        actualBranch: "feature-x",
         worktreePath: "/tmp/worktrees/feature-x",
       },
     });
@@ -247,6 +250,32 @@ describe("launch", () => {
     expect(content).toContain("DO NOT run `git checkout`");
   });
 
+  it("injects guardrails with parent branch label when actualBranch differs", () => {
+    mockExistsSync.mockImplementation((path: string) => {
+      if (path === "/tmp/worktrees/main-wt-2") return true;
+      if (typeof path === "string" && path.includes(".claude")) return false;
+      return false;
+    });
+
+    launcher.launch({
+      cwd: "/tmp/worktrees/main-wt-2",
+      worktreeInfo: {
+        isWorktree: true,
+        repoRoot: "/tmp/main-repo",
+        branch: "main",
+        actualBranch: "main-wt-2",
+        worktreePath: "/tmp/worktrees/main-wt-2",
+      },
+    });
+
+    expect(mockWriteFileSync).toHaveBeenCalled();
+    const content = mockWriteFileSync.mock.calls[0][1] as string;
+    // Should mention the actual branch and the parent branch
+    expect(content).toContain("main-wt-2");
+    expect(content).toContain("(created from `main`)");
+    expect(content).toContain("MUST stay on the `main-wt-2` branch");
+  });
+
   it("does NOT inject guardrails when worktree path equals main repo root", () => {
     mockExistsSync.mockReturnValue(true);
 
@@ -256,6 +285,7 @@ describe("launch", () => {
         isWorktree: true,
         repoRoot: "/tmp/main-repo",
         branch: "main",
+        actualBranch: "main",
         worktreePath: "/tmp/main-repo",
       },
     });
@@ -275,6 +305,7 @@ describe("launch", () => {
         isWorktree: true,
         repoRoot: "/tmp/main-repo",
         branch: "feature-y",
+        actualBranch: "feature-y",
         worktreePath: "/tmp/worktrees/nonexistent",
       },
     });
