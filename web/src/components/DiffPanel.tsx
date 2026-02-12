@@ -40,17 +40,23 @@ export function DiffPanel({ sessionId }: { sessionId: string }) {
       setDiffContent("");
       return;
     }
+    let cancelled = false;
     setDiffLoading(true);
     api
       .getFileDiff(selectedFile)
       .then((res) => {
-        setDiffContent(res.diff);
-        setDiffLoading(false);
+        if (!cancelled) {
+          setDiffContent(res.diff);
+          setDiffLoading(false);
+        }
       })
       .catch(() => {
-        setDiffContent("");
-        setDiffLoading(false);
+        if (!cancelled) {
+          setDiffContent("");
+          setDiffLoading(false);
+        }
       });
+    return () => { cancelled = true; };
   }, [selectedFile]);
 
   const handleFileSelect = useCallback(
