@@ -18,7 +18,7 @@ Claude Code in your browser. We reverse-engineered the undocumented WebSocket pr
 bunx the-vibe-companion
 ```
 
-Open [localhost:3456](http://localhost:3456). That's it.
+Open [localhost:3457](http://localhost:3457). That's it.
 
 ## Why
 
@@ -64,7 +64,28 @@ bun install
 bun run dev       # backend + Vite HMR on :5174
 ```
 
-Production: `bun run build && bun run start` serves everything on `:3456`.
+Production: `bun run build && bun run start` serves everything on `:3457`.
+
+## Run as a background service (macOS)
+
+Install as a launchd service that starts on login and restarts on crash:
+
+```bash
+bun install -g the-vibe-companion
+the-vibe-companion install
+```
+
+Other commands:
+
+```bash
+the-vibe-companion status      # check if the service is running
+the-vibe-companion logs        # tail stdout/stderr logs
+the-vibe-companion uninstall   # remove the service
+```
+
+Use `--port <n>` with `install` to override the default port (3457).
+
+Dev uses port 3456 for the backend and 5174 for Vite HMR, so both dev and prod can run simultaneously.
 
 ## Tech stack
 
