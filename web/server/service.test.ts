@@ -1,4 +1,11 @@
-import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
+import {
+  mkdtempSync,
+  rmSync,
+  readFileSync,
+  existsSync,
+  mkdirSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -87,6 +94,10 @@ afterEach(() => {
 
 function plistPath(): string {
   return join(tempDir, "Library", "LaunchAgents", "sh.thecompanion.app.plist");
+}
+
+function oldPlistPath(): string {
+  return join(tempDir, "Library", "LaunchAgents", "co.thevibecompany.companion.plist");
 }
 
 function logDir(): string {
@@ -235,6 +246,33 @@ describe("install", () => {
     await expect(service.install()).rejects.toThrow("process.exit(1)");
     expect(existsSync(plistPath())).toBe(false);
   });
+
+  it("migrates old launchd label before installing", async () => {
+    const oldPath = oldPlistPath();
+    const launchAgentsDir = join(tempDir, "Library", "LaunchAgents");
+    rmSync(launchAgentsDir, { recursive: true, force: true });
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (cmd.startsWith("which")) return "/usr/local/bin/the-companion\n";
+      if (cmd.startsWith("launchctl unload")) return "";
+      if (cmd.startsWith("launchctl load")) return "";
+      return "";
+    });
+
+    // Create a legacy plist to simulate pre-rename installs
+    const plist = service.generatePlist({ binPath: "/usr/local/bin/the-companion" })
+      .replaceAll("sh.thecompanion.app", "co.thevibecompany.companion");
+    mkdirSync(launchAgentsDir, { recursive: true });
+    writeFileSync(oldPath, plist, "utf-8");
+
+    await service.install();
+
+    expect(existsSync(oldPath)).toBe(false);
+    expect(existsSync(plistPath())).toBe(true);
+    expect(mockExecSync).toHaveBeenCalledWith(
+      expect.stringContaining(`launchctl unload -w "${oldPath}"`),
+      expect.any(Object),
+    );
+  });
 });
 
 // ===========================================================================
@@ -267,6 +305,23 @@ describe("uninstall", () => {
   it("handles not-installed gracefully", async () => {
     // Should not throw
     await service.uninstall();
+  });
+
+  it("uninstalls old launchd label when only legacy plist exists", async () => {
+    const oldPath = oldPlistPath();
+    const launchAgentsDir = join(tempDir, "Library", "LaunchAgents");
+    mkdirSync(launchAgentsDir, { recursive: true });
+    writeFileSync(oldPath, "<plist/>", "utf-8");
+    mockExecSync.mockReset();
+    mockExecSync.mockImplementation(() => "");
+
+    await service.uninstall();
+
+    expect(existsSync(oldPath)).toBe(false);
+    expect(mockExecSync).toHaveBeenCalledWith(
+      expect.stringContaining(`launchctl unload -w "${oldPath}"`),
+      expect.any(Object),
+    );
   });
 });
 
@@ -328,6 +383,42 @@ describe("status", () => {
     expect(result.installed).toBe(true);
     expect(result.running).toBe(false);
   });
+
+  it("reports legacy launchd label as installed and running", async () => {
+    const oldPath = oldPlistPath();
+    const launchAgentsDir = join(tempDir, "Library", "LaunchAgents");
+    mkdirSync(launchAgentsDir, { recursive: true });
+    writeFileSync(
+      oldPath,
+      `
+<plist>
+<dict>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PORT</key>
+    <string>4567</string>
+  </dict>
+</dict>
+</plist>
+`,
+      "utf-8",
+    );
+    mockExecSync.mockReset();
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (typeof cmd === "string" && cmd.includes("launchctl list")) {
+        return `{\n\t"PID" = 12345;\n\t"Label" = "co.thevibecompany.companion";\n}`;
+      }
+      return "";
+    });
+
+    const result = await service.status();
+    expect(result).toEqual({
+      installed: true,
+      running: true,
+      pid: 12345,
+      port: 4567,
+    });
+  });
 });
 
 // ===========================================================================
@@ -351,7 +442,7 @@ describe("isRunningAsService", () => {
   it("returns true when plist exists and service has a PID", async () => {
     // Install first
     mockExecSync.mockImplementation((cmd: string) => {
-      if (cmd.startsWith("which")) return "/usr/local/bin/the-vibe-companion\n";
+      if (cmd.startsWith("which")) return "/usr/local/bin/the-companion\n";
       if (cmd.startsWith("launchctl load")) return "";
       return "";
     });
@@ -362,7 +453,7 @@ describe("isRunningAsService", () => {
     mockExecSync.mockReset();
     mockExecSync.mockImplementation((cmd: string) => {
       if (typeof cmd === "string" && cmd.includes("launchctl list")) {
-        return `{\n\t"PID" = 12345;\n\t"Label" = "co.thevibecompany.companion";\n}`;
+        return `{\n\t"PID" = 12345;\n\t"Label" = "sh.thecompanion.app";\n}`;
       }
       return "";
     });
@@ -373,7 +464,7 @@ describe("isRunningAsService", () => {
   it("returns false when plist exists but no PID (not running)", async () => {
     // Install first
     mockExecSync.mockImplementation((cmd: string) => {
-      if (cmd.startsWith("which")) return "/usr/local/bin/the-vibe-companion\n";
+      if (cmd.startsWith("which")) return "/usr/local/bin/the-companion\n";
       if (cmd.startsWith("launchctl load")) return "";
       return "";
     });
@@ -384,7 +475,7 @@ describe("isRunningAsService", () => {
     mockExecSync.mockReset();
     mockExecSync.mockImplementation((cmd: string) => {
       if (typeof cmd === "string" && cmd.includes("launchctl list")) {
-        return `{\n\t"Label" = "co.thevibecompany.companion";\n}`;
+        return `{\n\t"Label" = "sh.thecompanion.app";\n}`;
       }
       return "";
     });
