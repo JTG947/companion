@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 import { readdir, readFile, writeFile, stat } from "node:fs/promises";
 import { resolve, join, dirname } from "node:path";
 import { homedir } from "node:os";
@@ -12,6 +12,9 @@ import * as envManager from "./env-manager.js";
 import * as gitUtils from "./git-utils.js";
 import * as sessionNames from "./session-names.js";
 import { getUsageLimits } from "./usage-limits.js";
+
+/** Reject branch names that contain shell metacharacters */
+const SAFE_BRANCH_RE = /^[\w\-.\/]+$/;
 
 export function createRoutes(
   launcher: CliLauncher,
@@ -572,6 +575,7 @@ export function createRoutes(
     const cwd = c.req.query("cwd");
     const baseBranch = c.req.query("baseBranch");
     if (!cwd || !baseBranch) return c.json({ error: "cwd and baseBranch required" }, 400);
+    if (!SAFE_BRANCH_RE.test(baseBranch)) return c.json({ error: "Invalid baseBranch" }, 400);
     return c.json(gitUtils.getCommitLog(cwd, baseBranch));
   });
 
@@ -580,6 +584,9 @@ export function createRoutes(
     const { cwd, branch, baseBranch, title, body: prBody, draft } = body;
     if (!cwd || !branch || !baseBranch || !title) {
       return c.json({ error: "cwd, branch, baseBranch, and title are required" }, 400);
+    }
+    if (!SAFE_BRANCH_RE.test(branch) || !SAFE_BRANCH_RE.test(baseBranch)) {
+      return c.json({ error: "Invalid branch name" }, 400);
     }
 
     // Step 1: Push the branch
@@ -603,9 +610,9 @@ export function createRoutes(
     // Step 3: Refresh ahead/behind counts
     let git_ahead = 0, git_behind = 0;
     try {
-      const counts = execSync(
-        "git rev-list --left-right --count @{upstream}...HEAD",
-        { cwd, encoding: "utf-8", timeout: 3000 },
+      const counts = execFileSync(
+        "git", ["rev-list", "--left-right", "--count", "@{upstream}...HEAD"],
+        { cwd, encoding: "utf-8", timeout: 3000, stdio: ["pipe", "pipe", "pipe"] },
       ).trim();
       const [behind, ahead] = counts.split(/\s+/).map(Number);
       git_ahead = ahead || 0;

@@ -1,4 +1,4 @@
-import { execSync, type ExecSyncOptions } from "node:child_process";
+import { execSync, execFileSync, type ExecSyncOptions } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
@@ -371,7 +371,12 @@ export function gitPush(
   branch: string,
 ): { success: boolean; output: string } {
   try {
-    const output = git(`push -u origin -- ${JSON.stringify(branch)}`, cwd);
+    const output = execFileSync("git", ["push", "-u", "origin", "--", branch], {
+      cwd,
+      encoding: "utf-8",
+      timeout: 30_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
     return { success: true, output };
   } catch (e: unknown) {
     return { success: false, output: e instanceof Error ? e.message : String(e) };
@@ -394,27 +399,26 @@ export function ghCreatePR(
     draft?: boolean;
   },
 ): CreatePRResult {
-  const execOpts: ExecSyncOptions = { cwd, encoding: "utf-8", timeout: 5_000, stdio: ["pipe", "pipe", "pipe"] };
+  const fileOpts: ExecSyncOptions = { cwd, encoding: "utf-8", timeout: 5_000, stdio: ["pipe", "pipe", "pipe"] };
 
   // Check if gh CLI is available
   try {
-    execSync("which gh", { encoding: "utf-8", timeout: 3_000 });
+    execFileSync("gh", ["--version"], { encoding: "utf-8", timeout: 3_000, stdio: ["pipe", "pipe", "pipe"] });
   } catch {
     return { success: false, error: "GitHub CLI (gh) is not installed. Install it from https://cli.github.com/" };
   }
 
   // Check if gh is authenticated
   try {
-    execSync("gh auth status", execOpts);
+    execFileSync("gh", ["auth", "status"], fileOpts);
   } catch {
     return { success: false, error: "GitHub CLI is not authenticated. Run 'gh auth login' first." };
   }
 
   try {
-    const draftFlag = options.draft ? " --draft" : "";
-    const bodyFlag = options.body ? ` --body ${JSON.stringify(options.body)}` : ` --body ""`;
-    const cmd = `gh pr create --head ${options.branch} --base ${options.baseBranch} --title ${JSON.stringify(options.title)}${bodyFlag}${draftFlag}`;
-    const output = execSync(cmd, {
+    const args = ["pr", "create", "--head", options.branch, "--base", options.baseBranch, "--title", options.title, "--body", options.body || ""];
+    if (options.draft) args.push("--draft");
+    const output = execFileSync("gh", args, {
       cwd,
       encoding: "utf-8",
       timeout: 30_000,
@@ -436,10 +440,11 @@ export function getCommitLog(
   maxCount: number = 20,
 ): { hash: string; subject: string }[] {
   try {
-    const raw = git(
-      `log --format="%h %s" ${JSON.stringify(`origin/${baseBranch}..HEAD`)} --max-count=${maxCount}`,
-      cwd,
-    );
+    const raw = execFileSync(
+      "git",
+      ["log", "--format=%h %s", `origin/${baseBranch}..HEAD`, `--max-count=${maxCount}`],
+      { cwd, encoding: "utf-8", timeout: 10_000, stdio: ["pipe", "pipe", "pipe"] },
+    ).trim();
     if (!raw) return [];
     return raw.split("\n").filter(Boolean).map((line) => {
       const spaceIdx = line.indexOf(" ");
