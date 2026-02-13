@@ -36,7 +36,8 @@ export function Sidebar() {
   const collapsedProjects = useStore((s) => s.collapsedProjects);
   const toggleProjectCollapse = useStore((s) => s.toggleProjectCollapse);
   const terminalOpen = useStore((s) => s.terminalOpen);
-  const notificationEnabledCount = Number(notificationSound) + Number(notificationDesktop);
+  const notificationApiAvailable = typeof Notification !== "undefined";
+  const notificationEnabledCount = Number(notificationSound) + (notificationApiAvailable ? Number(notificationDesktop) : 0);
   const notificationSummary = notificationEnabledCount === 0 ? "Off" : `${notificationEnabledCount} on`;
 
   // Poll for SDK sessions on mount
@@ -409,7 +410,7 @@ export function Sidebar() {
                 )}
                 <span>{notificationSound ? "Sound on" : "Sound off"}</span>
               </button>
-              {typeof Notification !== "undefined" && (
+              {notificationApiAvailable && (
                 <button
                   onClick={async () => {
                     if (!notificationDesktop) {

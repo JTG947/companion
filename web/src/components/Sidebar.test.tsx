@@ -414,6 +414,21 @@ describe("Sidebar", () => {
     vi.unstubAllGlobals();
   });
 
+  it("does not count desktop alerts in summary when Notification API is unavailable", () => {
+    vi.stubGlobal("Notification", undefined);
+    mockState = createMockState({
+      notificationSound: true,
+      notificationDesktop: true,
+    });
+    render(<Sidebar />);
+    const notificationButton = screen.getByRole("button", { name: /Notification/i });
+    expect(notificationButton).toHaveTextContent("1 on");
+    fireEvent.click(notificationButton);
+    expect(screen.getByText("Sound on")).toBeInTheDocument();
+    expect(screen.queryByText("Alerts on")).not.toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
   it("session name shows animate-name-appear class when recently renamed", () => {
     const session = makeSession("s1");
     const sdk = makeSdkSession("s1");
