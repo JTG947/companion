@@ -1,24 +1,18 @@
 import { useEffect, useState } from "react";
 import { useStore } from "../store.js";
 import { sendMcpGetStatus, sendMcpToggle, sendMcpReconnect, sendMcpSetServers } from "../ws.js";
-import type { McpServerDetail } from "../types.js";
+import type { McpServerDetail, McpServerConfig } from "../types.js";
 
 const EMPTY_SERVERS: McpServerDetail[] = [];
+const EMPTY_MCP_INIT: { name: string; status: string }[] = [];
 
-function statusBadge(status: McpServerDetail["status"]) {
-  switch (status) {
-    case "connected":
-      return { label: "Connected", cls: "text-cc-success bg-cc-success/10" };
-    case "connecting":
-      return { label: "Connecting", cls: "text-cc-warning bg-cc-warning/10" };
-    case "failed":
-      return { label: "Failed", cls: "text-cc-error bg-cc-error/10" };
-    case "disabled":
-      return { label: "Disabled", cls: "text-cc-muted bg-cc-hover" };
-    default:
-      return { label: status, cls: "text-cc-muted bg-cc-hover" };
-  }
-}
+const STATUS_STYLES: Record<string, { label: string; badge: string; dot: string }> = {
+  connected:  { label: "Connected",  badge: "text-cc-success bg-cc-success/10", dot: "bg-cc-success" },
+  connecting: { label: "Connecting", badge: "text-cc-warning bg-cc-warning/10", dot: "bg-cc-warning animate-pulse" },
+  failed:     { label: "Failed",     badge: "text-cc-error bg-cc-error/10",     dot: "bg-cc-error" },
+  disabled:   { label: "Disabled",   badge: "text-cc-muted bg-cc-hover",        dot: "bg-cc-muted opacity-40" },
+};
+const DEFAULT_STATUS = { label: "Unknown", badge: "text-cc-muted bg-cc-hover", dot: "bg-cc-muted opacity-40" };
 
 function McpServerRow({
   server,
@@ -28,7 +22,7 @@ function McpServerRow({
   sessionId: string;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const badge = statusBadge(server.status);
+  const style = STATUS_STYLES[server.status] || DEFAULT_STATUS;
   const isEnabled = server.status !== "disabled";
   const toolCount = server.tools?.length ?? 0;
 
@@ -36,18 +30,7 @@ function McpServerRow({
     <div className="rounded-lg border border-cc-border bg-cc-bg">
       {/* Header row */}
       <div className="flex items-center gap-2 px-2.5 py-2">
-        {/* Status dot */}
-        <span
-          className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-            server.status === "connected"
-              ? "bg-cc-success"
-              : server.status === "connecting"
-              ? "bg-cc-warning animate-pulse"
-              : server.status === "failed"
-              ? "bg-cc-error"
-              : "bg-cc-muted opacity-40"
-          }`}
-        />
+        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${style.dot}`} />
 
         {/* Name + expand toggle */}
         <button
@@ -59,11 +42,8 @@ function McpServerRow({
           </span>
         </button>
 
-        {/* Status badge */}
-        <span
-          className={`text-[9px] font-medium px-1.5 rounded-full leading-[16px] shrink-0 ${badge.cls}`}
-        >
-          {badge.label}
+        <span className={`text-[9px] font-medium px-1.5 rounded-full leading-[16px] shrink-0 ${style.badge}`}>
+          {style.label}
         </span>
 
         {/* Actions */}
@@ -199,20 +179,15 @@ function AddServerForm({
     e.preventDefault();
     if (!canSubmit) return;
 
-    const serverConfig: Record<string, any> = {
-      type: serverType,
-    };
-
+    const config: McpServerConfig = { type: serverType };
     if (serverType === "stdio") {
-      serverConfig.command = command.trim();
-      if (args.trim()) {
-        serverConfig.args = args.trim().split(/\s+/);
-      }
+      config.command = command.trim();
+      if (args.trim()) config.args = args.trim().split(/\s+/);
     } else {
-      serverConfig.url = url.trim();
+      config.url = url.trim();
     }
 
-    sendMcpSetServers(sessionId, { [name.trim()]: serverConfig as any });
+    sendMcpSetServers(sessionId, { [name.trim()]: config });
     onDone();
   }
 
@@ -334,7 +309,7 @@ export function McpSection({ sessionId }: { sessionId: string }) {
   // The session_init mcp_servers gives us basic info (name + status).
   // We can detect if MCP servers exist from session state to show the section.
   const sessionMcpServers = useStore(
-    (s) => s.sessions.get(sessionId)?.mcp_servers || [],
+    (s) => s.sessions.get(sessionId)?.mcp_servers ?? EMPTY_MCP_INIT,
   );
 
   const hasMcp = servers.length > 0 || sessionMcpServers.length > 0;

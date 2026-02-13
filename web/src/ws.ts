@@ -1,5 +1,5 @@
 import { useStore } from "./store.js";
-import type { BrowserIncomingMessage, BrowserOutgoingMessage, ContentBlock, ChatMessage, TaskItem, SdkSessionInfo } from "./types.js";
+import type { BrowserIncomingMessage, BrowserOutgoingMessage, ContentBlock, ChatMessage, TaskItem, SdkSessionInfo, McpServerConfig } from "./types.js";
 import { generateUniqueSessionName } from "./utils/names.js";
 import { playNotificationSound } from "./utils/notification-sound.js";
 
@@ -545,6 +545,6 @@ export function sendMcpReconnect(sessionId: string, serverName: string) {
   sendToSession(sessionId, { type: "mcp_reconnect", serverName });
 }
 
-export function sendMcpSetServers(sessionId: string, servers: Record<string, { type: "stdio" | "sse" | "http" | "sdk"; command?: string; args?: string[]; env?: Record<string, string>; url?: string }>) {
-  sendToSession(sessionId, { type: "mcp_set_servers", servers } as any);
+export function sendMcpSetServers(sessionId: string, servers: Record<string, McpServerConfig>) {
+  sendToSession(sessionId, { type: "mcp_set_servers", servers });
 }

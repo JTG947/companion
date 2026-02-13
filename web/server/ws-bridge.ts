@@ -977,58 +977,45 @@ export class WsBridge {
 
   // ── MCP control messages ──────────────────────────────────────────────
 
-  private handleMcpGetStatus(session: Session) {
+  /** Send a control_request to CLI, optionally tracking the response via a callback. */
+  private sendControlRequest(
+    session: Session,
+    request: Record<string, unknown>,
+    onResponse?: PendingControlRequest,
+  ) {
     const requestId = randomUUID();
-    const ndjson = JSON.stringify({
+    if (onResponse) {
+      session.pendingControlRequests.set(requestId, onResponse);
+    }
+    this.sendToCLI(session, JSON.stringify({
       type: "control_request",
       request_id: requestId,
-      request: { subtype: "mcp_status" },
-    });
+      request,
+    }));
+  }
 
-    session.pendingControlRequests.set(requestId, {
+  private handleMcpGetStatus(session: Session) {
+    this.sendControlRequest(session, { subtype: "mcp_status" }, {
       subtype: "mcp_status",
       resolve: (response) => {
         const servers = (response as { mcpServers?: McpServerDetail[] }).mcpServers ?? [];
-        this.broadcastToBrowsers(session, {
-          type: "mcp_status",
-          servers,
-        });
+        this.broadcastToBrowsers(session, { type: "mcp_status", servers });
       },
     });
-
-    this.sendToCLI(session, ndjson);
   }
 
   private handleMcpToggle(session: Session, serverName: string, enabled: boolean) {
-    const ndjson = JSON.stringify({
-      type: "control_request",
-      request_id: randomUUID(),
-      request: { subtype: "mcp_toggle", serverName, enabled },
-    });
-    this.sendToCLI(session, ndjson);
-    // Refresh status after toggle
+    this.sendControlRequest(session, { subtype: "mcp_toggle", serverName, enabled });
     setTimeout(() => this.handleMcpGetStatus(session), 500);
   }
 
   private handleMcpReconnect(session: Session, serverName: string) {
-    const ndjson = JSON.stringify({
-      type: "control_request",
-      request_id: randomUUID(),
-      request: { subtype: "mcp_reconnect", serverName },
-    });
-    this.sendToCLI(session, ndjson);
-    // Refresh status after reconnect
+    this.sendControlRequest(session, { subtype: "mcp_reconnect", serverName });
     setTimeout(() => this.handleMcpGetStatus(session), 1000);
   }
 
   private handleMcpSetServers(session: Session, servers: Record<string, McpServerConfig>) {
-    const ndjson = JSON.stringify({
-      type: "control_request",
-      request_id: randomUUID(),
-      request: { subtype: "mcp_set_servers", servers },
-    });
-    this.sendToCLI(session, ndjson);
-    // Refresh status after servers are configured
+    this.sendControlRequest(session, { subtype: "mcp_set_servers", servers });
     setTimeout(() => this.handleMcpGetStatus(session), 2000);
   }
 
