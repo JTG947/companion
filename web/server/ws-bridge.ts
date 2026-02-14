@@ -367,6 +367,52 @@ export class WsBridge {
       .digest("hex");
   }
 
+  private handlePermissionAbort(
+    session: Session,
+    options: { requestId: string; source: "ws-bridge" | "codex-adapter" },
+  ): void {
+    const message = "Plugin execution aborted while evaluating permission request.";
+    if (options.source === "codex-adapter") {
+      if (session.codexAdapter) {
+        session.codexAdapter.sendBrowserMessage({
+          type: "permission_response",
+          request_id: options.requestId,
+          behavior: "deny",
+          message,
+          client_msg_id: `plugin-abort-${Date.now()}`,
+        });
+      }
+      void this.emitPluginEvent(this.createPluginEvent(
+        "permission.responded",
+        {
+          sessionId: session.id,
+          backendType: session.backendType,
+          requestId: options.requestId,
+          behavior: "deny",
+          automated: true,
+          pluginId: "plugin-manager",
+          message,
+        },
+        {
+          source: "codex-adapter",
+          sessionId: session.id,
+          backendType: session.backendType,
+          correlationId: options.requestId,
+        },
+      ));
+      return;
+    }
+
+    this.handlePermissionResponse(session, {
+      type: "permission_response",
+      request_id: options.requestId,
+      behavior: "deny",
+      message,
+      automated: true,
+      plugin_id: "plugin-manager",
+    });
+  }
+
   private refreshGitInfo(
     session: Session,
     options: { broadcastUpdate?: boolean; notifyPoller?: boolean } = {},
@@ -599,6 +645,10 @@ export class WsBridge {
           }
 
           if (pluginResult.aborted) {
+            this.handlePermissionAbort(session, {
+              requestId: msg.request.request_id,
+              source: "codex-adapter",
+            });
             return;
           }
 
@@ -1145,6 +1195,10 @@ export class WsBridge {
         }
 
         if (pluginResult.aborted) {
+          this.handlePermissionAbort(session, {
+            requestId: msg.request_id,
+            source: "ws-bridge",
+          });
           return;
         }
 

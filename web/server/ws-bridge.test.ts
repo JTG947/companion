@@ -2,7 +2,14 @@ import { vi } from "vitest";
 
 const mockExecSync = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => ({ execSync: mockExecSync }));
-vi.mock("node:crypto", () => ({ randomUUID: () => "test-uuid" }));
+vi.mock("node:crypto", () => ({
+  randomUUID: () => "test-uuid",
+  createHash: () => ({
+    update: () => ({
+      digest: () => "hash-test",
+    }),
+  }),
+}));
 
 import { WsBridge, type SocketData } from "./ws-bridge.js";
 import { SessionStore } from "./session-store.js";
@@ -1165,6 +1172,36 @@ describe("Browser message routing", () => {
     expect(session.pendingPermissions.has("req-allow")).toBe(false);
   });
 
+  it("permission request: plugin abort returns deny control_response to Claude CLI", async () => {
+    bridge.setPluginManager({
+      emit: vi.fn(async (event: any) => {
+        if (event.name === "permission.requested") {
+          return { insights: [], aborted: true };
+        }
+        return { insights: [], aborted: false };
+      }),
+    } as any);
+    cli.send.mockClear();
+
+    bridge.handleCLIMessage(cli, JSON.stringify({
+      type: "control_request",
+      request_id: "req-abort-1",
+      request: {
+        subtype: "can_use_tool",
+        tool_name: "Bash",
+        input: { command: "rm -rf /" },
+        tool_use_id: "tu-abort-1",
+      },
+    }));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(cli.send).toHaveBeenCalledTimes(1);
+    const sent = JSON.parse((cli.send.mock.calls[0][0] as string).trim());
+    expect(sent.type).toBe("control_response");
+    expect(sent.response.request_id).toBe("req-abort-1");
+    expect(sent.response.response.behavior).toBe("deny");
+  });
+
   it("permission_response deny: sends deny response to CLI", () => {
     // Create a pending permission
     bridge.handleCLIMessage(cli, JSON.stringify({
@@ -1350,6 +1387,51 @@ describe("Browser message routing", () => {
     bridge.handleBrowserMessage(browser, JSON.stringify(payload));
     bridge.handleBrowserMessage(browser, JSON.stringify(payload));
     expect(cli.send).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Codex permission handling", () => {
+  it("plugin abort returns deny response to Codex adapter", async () => {
+    let onBrowserMessageHandler: ((msg: any) => void) | null = null;
+    const adapter = {
+      onBrowserMessage: (handler: (msg: any) => void) => {
+        onBrowserMessageHandler = handler;
+      },
+      onSessionMeta: (_handler: (meta: any) => void) => {},
+      onDisconnect: (_handler: () => void) => {},
+      onInitError: (_handler: (error: Error) => void) => {},
+      sendBrowserMessage: vi.fn(),
+      isConnected: () => true,
+    };
+
+    bridge.setPluginManager({
+      emit: vi.fn(async (event: any) => {
+        if (event.name === "permission.requested") {
+          return { insights: [], aborted: true };
+        }
+        return { insights: [], aborted: false };
+      }),
+    } as any);
+    bridge.attachCodexAdapter("s-codex-abort", adapter as any);
+
+    expect(onBrowserMessageHandler).toBeTruthy();
+    onBrowserMessageHandler!({
+      type: "permission_request",
+      request: {
+        request_id: "codex-req-1",
+        tool_name: "Bash",
+        input: { command: "rm -rf /" },
+        tool_use_id: "codex-tu-1",
+        timestamp: Date.now(),
+      },
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(adapter.sendBrowserMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: "permission_response",
+      request_id: "codex-req-1",
+      behavior: "deny",
+    }));
   });
 });
 
