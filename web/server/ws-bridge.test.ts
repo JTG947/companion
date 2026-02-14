@@ -1078,6 +1078,59 @@ describe("Browser message routing", () => {
     expect(sent.message.content[1].text).toBe("What's in this image?");
   });
 
+  it("user_message middleware can rewrite content before send", async () => {
+    bridge.setPluginManager({
+      emit: vi.fn(async (event: any) => {
+        if (event.name === "user.message.before_send") {
+          return {
+            insights: [],
+            aborted: false,
+            userMessageMutation: {
+              content: `[x] ${event.data.content}`,
+              pluginId: "rewrite-plugin",
+            },
+          };
+        }
+        return { insights: [], aborted: false };
+      }),
+    } as any);
+
+    bridge.handleBrowserMessage(browser, JSON.stringify({
+      type: "user_message",
+      content: "hello",
+    }));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(cli.send).toHaveBeenCalledTimes(1);
+    const sentRaw = cli.send.mock.calls[0][0] as string;
+    const sent = JSON.parse(sentRaw.trim());
+    expect(sent.message.content).toBe("[x] hello");
+  });
+
+  it("user_message middleware can block send", async () => {
+    bridge.setPluginManager({
+      emit: vi.fn(async () => ({
+        insights: [],
+        aborted: false,
+        userMessageMutation: {
+          blocked: true,
+          message: "blocked by policy",
+          pluginId: "policy-plugin",
+        },
+      })),
+    } as any);
+
+    bridge.handleBrowserMessage(browser, JSON.stringify({
+      type: "user_message",
+      content: "should not send",
+    }));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(cli.send).not.toHaveBeenCalled();
+    const calls = browser.send.mock.calls.map(([arg]: [string]) => JSON.parse(arg));
+    expect(calls.some((m: any) => m.type === "plugin_insight" && m.insight.title === "User message blocked")).toBe(true);
+  });
+
   it("permission_response allow: sends control_response to CLI", () => {
     // First create a pending permission
     bridge.handleCLIMessage(cli, JSON.stringify({

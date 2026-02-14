@@ -11,6 +11,7 @@ import { getBuiltinPlugins } from "./builtins.js";
 export interface EmitResult {
   insights: NonNullable<PluginEventResult["insights"]>;
   permissionDecision?: PermissionAutomationDecision;
+  userMessageMutation?: NonNullable<PluginEventResult["userMessageMutation"]>;
   aborted: boolean;
 }
 
@@ -158,10 +159,12 @@ export class PluginManager {
     const state = this.stateStore.getState();
     const insights: EmitResult["insights"] = [];
     let permissionDecision: PermissionAutomationDecision | undefined;
+    let userMessageMutation: EmitResult["userMessageMutation"];
     let aborted = false;
+    let mutableEvent: PluginEvent = event;
 
     const candidates = Array.from(this.definitions.values())
-      .filter((plugin) => plugin.events.includes(event.name))
+      .filter((plugin) => plugin.events.includes("*") || plugin.events.includes(event.name))
       .sort((a, b) => b.priority - a.priority);
 
     for (const plugin of candidates) {
@@ -172,7 +175,7 @@ export class PluginManager {
       const config = this.resolveConfig(plugin, state.config[plugin.id], { persistDefaultOnInvalid: true });
       const timeoutMs = plugin.timeoutMs ?? DEFAULT_TIMEOUT_MS;
       const failPolicy = plugin.failPolicy ?? "continue";
-      const run = () => runWithTimeout(Promise.resolve(plugin.onEvent(event, config)), timeoutMs);
+      const run = () => runWithTimeout(Promise.resolve(plugin.onEvent(mutableEvent, config)), timeoutMs);
 
       if (!plugin.blocking) {
         run()
@@ -201,12 +204,41 @@ export class PluginManager {
       }
 
       if (!result) continue;
+      if (result.eventDataPatch && mutableEvent.data && typeof mutableEvent.data === "object") {
+        mutableEvent = {
+          ...mutableEvent,
+          data: {
+            ...(mutableEvent.data as Record<string, unknown>),
+            ...result.eventDataPatch,
+          },
+        } as PluginEvent;
+      }
       if (result.insights?.length) insights.push(...result.insights);
       if (!permissionDecision && result.permissionDecision) {
         permissionDecision = result.permissionDecision;
       }
+      if (result.userMessageMutation) {
+        userMessageMutation = {
+          ...userMessageMutation,
+          ...result.userMessageMutation,
+        };
+        if (
+          mutableEvent.name === "user.message.before_send"
+          && mutableEvent.data
+          && typeof mutableEvent.data === "object"
+        ) {
+          const nextData = { ...(mutableEvent.data as Record<string, unknown>) };
+          if (typeof result.userMessageMutation.content === "string") {
+            nextData.content = result.userMessageMutation.content;
+          }
+          if (Array.isArray(result.userMessageMutation.images)) {
+            nextData.images = result.userMessageMutation.images;
+          }
+          mutableEvent = { ...mutableEvent, data: nextData } as PluginEvent;
+        }
+      }
     }
 
-    return { insights, permissionDecision, aborted };
+    return { insights, permissionDecision, userMessageMutation, aborted };
   }
 }

@@ -363,4 +363,96 @@ describe("PluginManager", () => {
 
     expect(() => manager.updateConfig("strict-plugin", { required: 123 })).toThrow(PluginConfigValidationError);
   });
+
+  it("supports wildcard subscriptions and middleware-style user message mutations", async () => {
+    const globalPlugin: PluginDefinition = {
+      id: "global-plugin",
+      name: "Global",
+      version: "1.0.0",
+      description: "Runs on all events",
+      events: ["*"],
+      priority: 100,
+      blocking: true,
+      defaultEnabled: true,
+      defaultConfig: {},
+      onEvent: (event) => {
+        if (event.name === "user.message.before_send") {
+          return {
+            userMessageMutation: {
+              content: `[global] ${event.data.content}`,
+              pluginId: "global-plugin",
+            },
+          };
+        }
+        return;
+      },
+    };
+
+    const projectPlugin: PluginDefinition = {
+      id: "project-plugin",
+      name: "Project",
+      version: "1.0.0",
+      description: "Project-specific message middleware",
+      events: ["user.message.before_send"],
+      priority: 50,
+      blocking: true,
+      defaultEnabled: true,
+      defaultConfig: {},
+      onEvent: (event) => {
+        if (event.name !== "user.message.before_send") return;
+        return {
+          userMessageMutation: {
+            content: `${event.data.content} [project]`,
+            pluginId: "project-plugin",
+          },
+        };
+      },
+    };
+
+    manager.register(projectPlugin);
+    manager.register(globalPlugin);
+
+    const res = await manager.emit({
+      name: "user.message.before_send",
+      meta: {
+        eventId: "e6",
+        eventVersion: 2,
+        timestamp: Date.now(),
+        source: "ws-bridge",
+        sessionId: "s1",
+        backendType: "claude",
+      },
+      data: {
+        sessionId: "s1",
+        backendType: "claude",
+        state: {
+          session_id: "s1",
+          backend_type: "claude",
+          model: "",
+          cwd: "/repo/project-x",
+          tools: [],
+          permissionMode: "default",
+          claude_code_version: "",
+          mcp_servers: [],
+          agents: [],
+          slash_commands: [],
+          skills: [],
+          total_cost_usd: 0,
+          num_turns: 0,
+          context_used_percent: 0,
+          is_compacting: false,
+          git_branch: "",
+          is_worktree: false,
+          repo_root: "",
+          git_ahead: 0,
+          git_behind: 0,
+          total_lines_added: 0,
+          total_lines_removed: 0,
+        },
+        content: "hello",
+      },
+    });
+
+    expect(res.userMessageMutation?.content).toBe("[global] hello [project]");
+  });
 });

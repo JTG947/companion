@@ -1,6 +1,7 @@
 import type { BackendType, CLIResultMessage, PermissionRequest, SessionState } from "../session-types.js";
 
 export type PluginEventName =
+  | "user.message.before_send"
   | "session.created"
   | "session.killed"
   | "session.archived"
@@ -19,6 +20,13 @@ export type PluginEventName =
   | "mcp.status.changed";
 
 export interface PluginEventMap {
+  "user.message.before_send": {
+    sessionId: string;
+    backendType: BackendType;
+    state: SessionState;
+    content: string;
+    images?: Array<{ media_type: string; data: string }>;
+  };
   "session.created": { session: SessionState };
   "session.killed": { sessionId: string };
   "session.archived": { sessionId: string };
@@ -143,16 +151,27 @@ export interface PermissionAutomationDecision {
 export interface PluginEventResult {
   insights?: PluginInsight[];
   permissionDecision?: PermissionAutomationDecision;
+  userMessageMutation?: {
+    content?: string;
+    images?: Array<{ media_type: string; data: string }>;
+    blocked?: boolean;
+    message?: string;
+    pluginId?: string;
+  };
+  /** Optional patch merged into event.data for downstream plugins in the same emit chain. */
+  eventDataPatch?: Record<string, unknown>;
 }
 
 export type PluginFailPolicy = "continue" | "abort_current_action";
+
+export type PluginEventSubscription = PluginEventName | "*";
 
 export interface PluginDefinition<TConfig = unknown> {
   id: string;
   name: string;
   version: string;
   description: string;
-  events: PluginEventName[];
+  events: PluginEventSubscription[];
   priority: number;
   blocking: boolean;
   timeoutMs?: number;
@@ -168,7 +187,7 @@ export interface PluginRuntimeInfo {
   name: string;
   version: string;
   description: string;
-  events: PluginEventName[];
+  events: PluginEventSubscription[];
   priority: number;
   blocking: boolean;
   timeoutMs: number;

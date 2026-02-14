@@ -43,7 +43,7 @@ const plugin: PluginDefinition<MyConfig> = {
   name: "My Plugin",
   version: "1.0.0",
   description: "My plugin description",
-  events: ["result.received"],
+  events: ["result.received"], // or ["*"] for all events
   priority: 100,
   blocking: true,
   timeoutMs: 1000,
@@ -52,10 +52,18 @@ const plugin: PluginDefinition<MyConfig> = {
   defaultConfig: { /* ... */ },
   validateConfig: (raw) => normalizedConfig,
   onEvent: async (event, config) => {
-    // return insights and/or permissionDecision
+    // return insights, permissionDecision, userMessageMutation and/or eventDataPatch
   },
 };
 ```
+
+## Middleware Pattern
+
+- Use `user.message.before_send` to implement message middleware before any user message is sent.
+- `userMessageMutation.content` can rewrite the user input.
+- `userMessageMutation.blocked` can stop sending the message.
+- `events: ["*"]` lets a plugin run on every event.
+- `eventDataPatch` can patch `event.data` for downstream plugins in the same chain.
 
 ## Integration Checklist
 

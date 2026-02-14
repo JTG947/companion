@@ -18,13 +18,13 @@ export const myPluginTemplate: PluginDefinition<MyPluginConfig> = {
   name: "My Plugin Template",
   version: "1.0.0",
   description: "Template for building Companion plugins.",
-  events: ["result.received"],
+  events: ["*"],
   priority: 100,
   blocking: true,
   timeoutMs: 1000,
   failPolicy: "continue",
   defaultEnabled: false,
-  defaultConfig: { enabledEvents: ["result.received"] },
+  defaultConfig: { enabledEvents: ["result.received", "user.message.before_send"] },
   validateConfig,
   onEvent: async (event, config): Promise<PluginEventResult | void> => {
     if (!config.enabledEvents.includes(event.name)) return;
@@ -44,6 +44,17 @@ export const myPluginTemplate: PluginDefinition<MyPluginConfig> = {
           },
         ],
       };
+    }
+
+    if (event.name === "user.message.before_send") {
+      if (event.data.state.cwd.includes("/my-special-project")) {
+        return {
+          userMessageMutation: {
+            content: `[project-x] ${event.data.content}`,
+            pluginId: "my-plugin-template",
+          },
+        };
+      }
     }
 
     return;

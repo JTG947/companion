@@ -83,6 +83,8 @@ interface Session {
   processedClientMessageIdSet: Set<string>;
   /** tool_use_id values that already emitted tool.started */
   startedToolUseIds: Set<string>;
+  /** Sequential chain to preserve user message ordering when middleware is async. */
+  userMessageChain: Promise<void>;
 }
 
 type GitSessionKey = "git_branch" | "is_worktree" | "repo_root" | "git_ahead" | "git_behind";
@@ -262,6 +264,7 @@ export class WsBridge {
           Array.isArray(p.processedClientMessageIds) ? p.processedClientMessageIds : [],
         ),
         startedToolUseIds: new Set(),
+        userMessageChain: Promise.resolve(),
       };
       session.state.backend_type = session.backendType;
       // Resolve git info for restored sessions (may have been persisted without it)
@@ -321,7 +324,7 @@ export class WsBridge {
     return event as unknown as Extract<PluginEvent, { name: T }>;
   }
 
-  private async emitPluginEvent(event: PluginEvent): Promise<{ insights: PluginInsight[]; permissionDecision?: { behavior: "allow" | "deny"; message?: string; updated_input?: Record<string, unknown>; pluginId?: string }; aborted: boolean }> {
+  private async emitPluginEvent(event: PluginEvent): Promise<{ insights: PluginInsight[]; permissionDecision?: { behavior: "allow" | "deny"; message?: string; updated_input?: Record<string, unknown>; pluginId?: string }; userMessageMutation?: { content?: string; images?: Array<{ media_type: string; data: string }>; blocked?: boolean; message?: string; pluginId?: string }; aborted: boolean }> {
     if (!this.pluginManager) return { insights: [], aborted: false };
     const sessionId = event.meta.sessionId;
     const session = sessionId ? this.sessions.get(sessionId) : undefined;
@@ -335,6 +338,7 @@ export class WsBridge {
     return {
       insights: result.insights as PluginInsight[],
       permissionDecision: result.permissionDecision,
+      userMessageMutation: result.userMessageMutation,
       aborted: result.aborted,
     };
   }
@@ -429,6 +433,7 @@ export class WsBridge {
         processedClientMessageIds: [],
         processedClientMessageIdSet: new Set(),
         startedToolUseIds: new Set(),
+        userMessageChain: Promise.resolve(),
       };
       this.sessions.set(sessionId, session);
     } else if (backendType) {
@@ -1266,33 +1271,13 @@ export class WsBridge {
       this.rememberClientMessage(session, msg.client_msg_id);
     }
 
+    if (msg.type === "user_message") {
+      this.enqueueUserMessage(session, msg);
+      return;
+    }
+
     // For Codex sessions, delegate entirely to the adapter
     if (session.backendType === "codex") {
-      // Store user messages in history for replay with stable ID for dedup on reconnect
-      if (msg.type === "user_message") {
-        const ts = Date.now();
-        session.messageHistory.push({
-          type: "user_message",
-          content: msg.content,
-          timestamp: ts,
-          id: `user-${ts}-${this.userMsgCounter++}`,
-        });
-        this.persistSession(session);
-        void this.emitPluginEvent(this.createPluginEvent(
-          "user.message.sent",
-          {
-            sessionId: session.id,
-            backendType: session.backendType,
-            content: msg.content,
-            hasImages: Array.isArray(msg.images) && msg.images.length > 0,
-          },
-          {
-            source: "ws-bridge",
-            sessionId: session.id,
-            backendType: session.backendType,
-          },
-        ));
-      }
       if (msg.type === "permission_response") {
         session.pendingPermissions.delete(msg.request_id);
         this.persistSession(session);
@@ -1329,10 +1314,6 @@ export class WsBridge {
 
     // Claude Code path (existing logic)
     switch (msg.type) {
-      case "user_message":
-        this.handleUserMessage(session, msg);
-        break;
-
       case "permission_response":
         this.handlePermissionResponse(session, msg);
         break;
@@ -1441,6 +1422,71 @@ export class WsBridge {
     }
   }
 
+  private enqueueUserMessage(
+    session: Session,
+    msg: { type: "user_message"; content: string; session_id?: string; images?: { media_type: string; data: string }[] },
+  ) {
+    if (!this.pluginManager) {
+      this.handleUserMessage(session, msg);
+      return;
+    }
+    session.userMessageChain = session.userMessageChain
+      .then(() => this.processUserMessage(session, msg))
+      .catch((err) => {
+        console.error(`[ws-bridge] Failed to process user message for session ${session.id}:`, err);
+      });
+  }
+
+  private async processUserMessage(
+    session: Session,
+    msg: { type: "user_message"; content: string; session_id?: string; images?: { media_type: string; data: string }[] },
+  ): Promise<void> {
+    const middlewareResult = await this.emitPluginEvent(this.createPluginEvent(
+      "user.message.before_send",
+      {
+        sessionId: session.id,
+        backendType: session.backendType,
+        state: session.state,
+        content: msg.content,
+        images: msg.images,
+      },
+      {
+        source: "ws-bridge",
+        sessionId: session.id,
+        backendType: session.backendType,
+      },
+    ));
+    if (middlewareResult.insights.length > 0) {
+      this.broadcastPluginInsights(session, middlewareResult.insights);
+    }
+
+    const transformedContent = middlewareResult.userMessageMutation?.content ?? msg.content;
+    const transformedImages = middlewareResult.userMessageMutation?.images ?? msg.images;
+    const blocked = middlewareResult.aborted || middlewareResult.userMessageMutation?.blocked === true;
+    if (blocked) {
+      const blockMessage = middlewareResult.userMessageMutation?.message || "Blocked by plugin middleware.";
+      const blockPluginId = middlewareResult.userMessageMutation?.pluginId || "plugin-middleware";
+      this.broadcastPluginInsights(session, [{
+        id: `${blockPluginId}-${Date.now()}-user-blocked`,
+        plugin_id: blockPluginId,
+        title: "User message blocked",
+        message: blockMessage,
+        level: "warning",
+        timestamp: Date.now(),
+        session_id: session.id,
+        event_name: "user.message.before_send",
+      }]);
+      return;
+    }
+
+    this.handleUserMessage(session, {
+      type: "user_message",
+      content: transformedContent,
+      session_id: msg.session_id,
+      images: transformedImages,
+    });
+  }
+
   private handleUserMessage(
     session: Session,
     msg: { type: "user_message"; content: string; session_id?: string; images?: { media_type: string; data: string }[] }
@@ -1454,29 +1500,38 @@ export class WsBridge {
       id: `user-${ts}-${this.userMsgCounter++}`,
     });
 
-    // Build content: if images are present, use content block array; otherwise plain string
-    let content: string | unknown[];
-    if (msg.images?.length) {
-      const blocks: unknown[] = [];
-      for (const img of msg.images) {
-        blocks.push({
-          type: "image",
-          source: { type: "base64", media_type: img.media_type, data: img.data },
-        });
+    if (session.backendType === "codex") {
+      if (session.codexAdapter) {
+        session.codexAdapter.sendBrowserMessage(msg);
+      } else {
+        console.log(`[ws-bridge] Codex adapter not yet attached for session ${session.id}, queuing user_message`);
+        session.pendingMessages.push(JSON.stringify(msg));
       }
-      blocks.push({ type: "text", text: msg.content });
-      content = blocks;
     } else {
-      content = msg.content;
-    }
+      // Build content: if images are present, use content block array; otherwise plain string
+      let content: string | unknown[];
+      if (msg.images?.length) {
+        const blocks: unknown[] = [];
+        for (const img of msg.images) {
+          blocks.push({
+            type: "image",
+            source: { type: "base64", media_type: img.media_type, data: img.data },
+          });
+        }
+        blocks.push({ type: "text", text: msg.content });
+        content = blocks;
+      } else {
+        content = msg.content;
+      }
 
-    const ndjson = JSON.stringify({
-      type: "user",
-      message: { role: "user", content },
-      parent_tool_use_id: null,
-      session_id: msg.session_id || session.state.session_id || "",
-    });
-    this.sendToCLI(session, ndjson);
+      const ndjson = JSON.stringify({
+        type: "user",
+        message: { role: "user", content },
+        parent_tool_use_id: null,
+        session_id: msg.session_id || session.state.session_id || "",
+      });
+      this.sendToCLI(session, ndjson);
+    }
     this.persistSession(session);
     void this.emitPluginEvent(this.createPluginEvent(
       "user.message.sent",
