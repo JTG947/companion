@@ -11,7 +11,7 @@ import { api } from "../api.js";
 import type { PermissionRequest, ChatMessage, ContentBlock, SessionState, McpServerDetail } from "../types.js";
 import type { TaskItem } from "../types.js";
 import type { UpdateInfo, GitHubPRInfo } from "../api.js";
-import { GitHubPRDisplay } from "./TaskPanel.js";
+import { GitHubPRDisplay, CodexRateLimitsSection, CodexTokenDetailsSection } from "./TaskPanel.js";
 
 // ─── Mock Data ──────────────────────────────────────────────────────────────
 
@@ -778,6 +778,15 @@ export function Playground() {
           </div>
         </Section>
 
+        {/* ─── Codex Session Details ──────────────────────── */}
+        <Section title="Codex Session Details" description="Rate limits and token details for Codex (OpenAI) sessions — streamed via session_update">
+          <div className="space-y-4">
+            <Card label="Rate limits with token breakdown">
+              <CodexPlaygroundDemo />
+            </Card>
+          </div>
+        </Section>
+
         {/* ─── Update Banner ──────────────────────────────── */}
         <Section title="Update Banner" description="Notification banner for available updates">
           <div className="space-y-4 max-w-3xl">
@@ -1250,6 +1259,70 @@ function PlaygroundSubagentGroup({ description, agentType, items }: { descriptio
           <PlaygroundToolGroup toolName={items[0]?.name || "Grep"} items={items} />
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Codex Session Demo (injects mock Codex data into a temp session) ────────
+
+const CODEX_DEMO_SESSION = "codex-playground-demo";
+
+function CodexPlaygroundDemo() {
+  useEffect(() => {
+    const store = useStore.getState();
+    const prev = store.sessions.get(CODEX_DEMO_SESSION);
+
+    // Create a fake Codex session with rate limits and token details
+    store.addSession({
+      session_id: CODEX_DEMO_SESSION,
+      backend_type: "codex",
+      model: "o3",
+      cwd: "/Users/demo/project",
+      tools: [],
+      permissionMode: "bypassPermissions",
+      claude_code_version: "0.1.0",
+      mcp_servers: [],
+      agents: [],
+      slash_commands: [],
+      skills: [],
+      total_cost_usd: 0,
+      num_turns: 8,
+      context_used_percent: 45,
+      is_compacting: false,
+      git_branch: "main",
+      is_worktree: false,
+      repo_root: "/Users/demo/project",
+      git_ahead: 0,
+      git_behind: 0,
+      total_lines_added: 0,
+      total_lines_removed: 0,
+      codex_rate_limits: {
+        primary: { usedPercent: 62, windowDurationMins: 300, resetsAt: Date.now() + 2 * 3_600_000 },
+        secondary: { usedPercent: 18, windowDurationMins: 10080, resetsAt: Date.now() + 5 * 86_400_000 },
+      },
+      codex_token_details: {
+        inputTokens: 84_230,
+        outputTokens: 12_450,
+        cachedInputTokens: 41_200,
+        reasoningOutputTokens: 8_900,
+        modelContextWindow: 200_000,
+      },
+    });
+
+    return () => {
+      useStore.setState((s) => {
+        const sessions = new Map(s.sessions);
+        if (prev) sessions.set(CODEX_DEMO_SESSION, prev);
+        else sessions.delete(CODEX_DEMO_SESSION);
+        return { sessions };
+      });
+    };
+  }, []);
+
+  return (
+    <div className="w-[280px] border border-cc-border rounded-xl overflow-hidden bg-cc-card">
+      <CodexRateLimitsSection sessionId={CODEX_DEMO_SESSION} />
+      <CodexTokenDetailsSection sessionId={CODEX_DEMO_SESSION} />
     </div>
   );
 }
