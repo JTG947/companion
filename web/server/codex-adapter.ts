@@ -102,6 +102,21 @@ interface CodexReasoningItem extends CodexItem {
   content?: string;
 }
 
+function asReasoningText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    return value.map((entry) => asReasoningText(entry)).filter(Boolean).join(" ").trim();
+  }
+  if (value && typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    if (typeof obj.text === "string") return obj.text;
+    if (typeof obj.content === "string") return obj.content;
+    if (Array.isArray(obj.content)) return asReasoningText(obj.content);
+  }
+  return "";
+}
+
 interface CodexContextCompactionItem extends CodexItem {
   type: "contextCompaction";
 }
@@ -1239,15 +1254,16 @@ export class CodexAdapter {
 
       case "reasoning": {
         const r = item as CodexReasoningItem;
-        this.reasoningTextByItemId.set(item.id, r.summary || r.content || "");
+        const initialText = asReasoningText(r.summary) || asReasoningText(r.content);
+        this.reasoningTextByItemId.set(item.id, initialText);
         // Emit as thinking content block
-        if (r.summary || r.content) {
+        if (initialText) {
           this.emit({
             type: "stream_event",
             event: {
               type: "content_block_start",
               index: 0,
-              content_block: { type: "thinking", thinking: r.summary || r.content || "" },
+              content_block: { type: "thinking", thinking: initialText },
             },
             parent_tool_use_id: null,
           });
@@ -1419,8 +1435,8 @@ export class CodexAdapter {
         const r = item as CodexReasoningItem;
         const thinkingText = (
           this.reasoningTextByItemId.get(item.id)
-          || r.summary
-          || r.content
+          || asReasoningText(r.summary)
+          || asReasoningText(r.content)
           || ""
         ).trim();
 

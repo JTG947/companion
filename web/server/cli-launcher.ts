@@ -504,6 +504,14 @@ export class CliLauncher {
       if (session) {
         session.state = "exited";
         session.exitCode = exitCode;
+        // If Codex exits shortly after launching a resumed thread, the saved
+        // thread id is often stale/corrupted. Clear it so the next relaunch
+        // starts a fresh thread instead of repeatedly failing on resume.
+        const uptime = Date.now() - spawnedAt;
+        if (uptime < 60_000 && session.cliSessionId) {
+          console.warn(`[cli-launcher] Codex session ${sessionId} exited quickly after resume (${uptime}ms). Clearing cliSessionId for fresh start.`);
+          session.cliSessionId = undefined;
+        }
       }
       this.processes.delete(sessionId);
       this.persistState();

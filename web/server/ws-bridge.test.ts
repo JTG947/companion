@@ -435,6 +435,20 @@ describe("CLI handlers", () => {
     expect(cancelMsg).toBeDefined();
     expect(cancelMsg.request_id).toBe("req-1");
   });
+
+  it("handleCLIClose: requests relaunch when browser is still connected", () => {
+    const relaunchCb = vi.fn();
+    bridge.onCLIRelaunchNeededCallback(relaunchCb);
+
+    const cli = makeCliSocket("s1");
+    const browser = makeBrowserSocket("s1");
+    bridge.handleCLIOpen(cli, "s1");
+    bridge.handleBrowserOpen(browser, "s1");
+
+    bridge.handleCLIClose(cli);
+
+    expect(relaunchCb).toHaveBeenCalledWith("s1");
+  });
 });
 
 // ─── Browser handlers ────────────────────────────────────────────────────────
@@ -1596,6 +1610,33 @@ describe("Codex permission handling", () => {
     expect(session?.pendingPermissions.has("codex-req-disconnect-race")).toBe(false);
     const calls = browser.send.mock.calls.map(([arg]: [string]) => JSON.parse(arg));
     expect(calls.some((m: any) => m.type === "permission_request" && m.request?.request_id === "codex-req-disconnect-race")).toBe(false);
+  });
+
+  it("requests relaunch when Codex adapter disconnects with active browser", async () => {
+    let onDisconnectHandler: (() => void) | undefined;
+    const relaunchCb = vi.fn();
+    bridge.onCLIRelaunchNeededCallback(relaunchCb);
+
+    const adapter = {
+      onBrowserMessage: (_handler: (msg: any) => void) => {},
+      onSessionMeta: (_handler: (meta: any) => void) => {},
+      onDisconnect: (handler: () => void) => {
+        onDisconnectHandler = handler;
+      },
+      onInitError: (_handler: (error: Error) => void) => {},
+      sendBrowserMessage: vi.fn(),
+      isConnected: () => true,
+    };
+
+    const browser = makeBrowserSocket("s-codex-relaunch");
+    bridge.attachCodexAdapter("s-codex-relaunch", adapter as any);
+    bridge.handleBrowserOpen(browser, "s-codex-relaunch");
+
+    expect(onDisconnectHandler).toBeDefined();
+    onDisconnectHandler!();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(relaunchCb).toHaveBeenCalledWith("s-codex-relaunch");
   });
 });
 

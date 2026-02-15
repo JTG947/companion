@@ -682,6 +682,39 @@ describe("relaunch", () => {
     const result = await launcher.relaunch("nonexistent");
     expect(result).toBe(false);
   });
+
+  it("clears codex cliSessionId when resumed process exits quickly", async () => {
+    mockResolveBinary.mockReturnValue("/usr/bin/codex");
+
+    let resolveFirst: (code: number) => void;
+    const firstCodexProc = {
+      pid: 11111,
+      kill: vi.fn(() => { resolveFirst(0); }),
+      exited: new Promise<number>((r) => { resolveFirst = r; }),
+      stdin: new WritableStream<Uint8Array>(),
+      stdout: new ReadableStream<Uint8Array>(),
+      stderr: new ReadableStream<Uint8Array>(),
+    };
+    mockSpawn.mockReturnValueOnce(firstCodexProc as any);
+
+    launcher.launch({
+      backendType: "codex",
+      cwd: "/tmp/project",
+      codexSandbox: "workspace-write",
+    });
+    launcher.setCLISessionId("test-session-id", "thread-to-resume");
+
+    mockSpawn.mockReturnValueOnce(createMockCodexProc(22222) as any);
+    const relaunched = await launcher.relaunch("test-session-id");
+    expect(relaunched).toBe(true);
+
+    // Simulate a fast exit on the relaunched process.
+    exitResolve(0);
+    await new Promise((r) => setTimeout(r, 20));
+
+    const session = launcher.getSession("test-session-id");
+    expect(session?.cliSessionId).toBeUndefined();
+  });
 });
 
 // ─── persistence ─────────────────────────────────────────────────────────────

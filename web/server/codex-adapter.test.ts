@@ -690,6 +690,42 @@ describe("CodexAdapter", () => {
     expect(blockStops.length).toBeGreaterThanOrEqual(1);
   });
 
+  it("handles non-string reasoning summaries without crashing", async () => {
+    const messages: BrowserIncomingMessage[] = [];
+    const adapter = new CodexAdapter(proc as never, "test-session", { model: "o4-mini" });
+    adapter.onBrowserMessage((msg) => messages.push(msg));
+
+    await new Promise((r) => setTimeout(r, 50));
+    stdout.push(JSON.stringify({ id: 1, result: { userAgent: "codex" } }) + "\n");
+    await new Promise((r) => setTimeout(r, 20));
+    stdout.push(JSON.stringify({ id: 2, result: { thread: { id: "thr_123" } } }) + "\n");
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Some Codex builds can emit structured summary payloads instead of plain strings.
+    stdout.push(JSON.stringify({
+      method: "item/started",
+      params: { item: { type: "reasoning", id: "r_structured" } },
+    }) + "\n");
+    await new Promise((r) => setTimeout(r, 20));
+
+    stdout.push(JSON.stringify({
+      method: "item/completed",
+      params: {
+        item: {
+          type: "reasoning",
+          id: "r_structured",
+          summary: [{ text: "Reasoning as structured payload" }],
+        },
+      },
+    }) + "\n");
+    await new Promise((r) => setTimeout(r, 50));
+
+    const blockStops = messages.filter(
+      (m) => m.type === "stream_event" && (m as { event: { type: string } }).event?.type === "content_block_stop",
+    );
+    expect(blockStops.length).toBeGreaterThanOrEqual(1);
+  });
+
   // ── Codex CLI enum values must be kebab-case (v0.99+) ─────────────────
   // Valid sandbox values: "read-only", "workspace-write", "danger-full-access"
   // Valid approvalPolicy values: "never", "untrusted", "on-failure", "on-request"

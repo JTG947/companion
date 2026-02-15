@@ -368,6 +368,13 @@ export class WsBridge {
     }
   }
 
+  private triggerRelaunchIfSessionActive(session: Session): void {
+    if (!this.onCLIRelaunchNeeded) return;
+    if (session.browserSockets.size === 0) return;
+    if (session.state.is_compacting) return;
+    this.onCLIRelaunchNeeded(session.id);
+  }
+
   private normalizeToolInput(input: Record<string, unknown>): { command?: string; filePath?: string } {
     return {
       command: typeof input.command === "string" ? input.command : undefined,
@@ -768,6 +775,7 @@ export class WsBridge {
           this.broadcastPluginInsights(session, pluginResult.insights);
         }
       });
+      this.triggerRelaunchIfSessionActive(session);
     });
 
     // Flush any messages queued while waiting for the adapter
@@ -868,6 +876,7 @@ export class WsBridge {
         this.broadcastPluginInsights(session, pluginResult.insights);
       }
     });
+    this.triggerRelaunchIfSessionActive(session);
   }
 
   // ── Browser WebSocket handlers ──────────────────────────────────────────
