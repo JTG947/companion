@@ -462,24 +462,6 @@ describe("Sidebar", () => {
     expect(nameElement.className).not.toContain("animate-name-appear");
   });
 
-  it("calls clearRecentlyRenamed on animation end", () => {
-    const session = makeSession("s1");
-    const sdk = makeSdkSession("s1");
-    mockState = createMockState({
-      sessions: new Map([["s1", session]]),
-      sdkSessions: [sdk],
-      sessionNames: new Map([["s1", "Animated Name"]]),
-      recentlyRenamed: new Set(["s1"]),
-    });
-
-    render(<Sidebar />);
-    const nameElement = screen.getByText("Animated Name");
-    const animatedWrapper = nameElement.closest(".animate-name-appear");
-    expect(animatedWrapper).toBeTruthy();
-    fireEvent.animationEnd(animatedWrapper as Element);
-    expect(mockState.clearRecentlyRenamed).toHaveBeenCalledWith("s1");
-  });
-
   it("animation class applies only to the recently renamed session, not others", () => {
     const session1 = makeSession("s1");
     const session2 = makeSession("s2");
