@@ -30,13 +30,9 @@ vi.mock("node:fs", async (importOriginal) => {
 vi.mock("./git-utils.js", () => ({
   getRepoInfo: vi.fn(() => null),
   listBranches: vi.fn(() => []),
-  listWorktrees: vi.fn(() => []),
-  ensureWorktree: vi.fn(),
   gitFetch: vi.fn(() => ({ success: true, output: "" })),
   gitPull: vi.fn(() => ({ success: true, output: "" })),
   checkoutBranch: vi.fn(),
-  removeWorktree: vi.fn(),
-  isWorktreeDirty: vi.fn(() => false),
 }));
 
 vi.mock("./session-names.js", () => ({
@@ -204,63 +200,12 @@ describe("POST /api/sessions/create", () => {
     );
   });
 
-  it("sets up a worktree when branch is specified", async () => {
-    vi.mocked(gitUtils.getRepoInfo).mockReturnValue({
-      repoRoot: "/repo",
-      repoName: "my-repo",
-      currentBranch: "main",
-      defaultBranch: "main",
-      isWorktree: false,
-    });
-    vi.mocked(gitUtils.ensureWorktree).mockReturnValue({
-      worktreePath: "/home/.companion/worktrees/my-repo/feat-branch",
-      branch: "feat-branch",
-      actualBranch: "feat-branch",
-      isNew: true,
-    });
-
-    const res = await app.request("/api/sessions/create", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cwd: "/repo", branch: "feat-branch", useWorktree: true }),
-    });
-
-    expect(res.status).toBe(200);
-    expect(gitUtils.getRepoInfo).toHaveBeenCalledWith("/repo");
-    expect(gitUtils.ensureWorktree).toHaveBeenCalledWith("/repo", "feat-branch", {
-      baseBranch: "main",
-      createBranch: undefined,
-      forceNew: true,
-    });
-    expect(launcher.launch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        cwd: "/home/.companion/worktrees/my-repo/feat-branch",
-        worktreeInfo: expect.objectContaining({
-          isWorktree: true,
-          repoRoot: "/repo",
-          branch: "feat-branch",
-          actualBranch: "feat-branch",
-          worktreePath: "/home/.companion/worktrees/my-repo/feat-branch",
-        }),
-      }),
-    );
-    expect(tracker.addMapping).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: "session-1",
-        repoRoot: "/repo",
-        branch: "feat-branch",
-        actualBranch: "feat-branch",
-      }),
-    );
-  });
-
   it("fetches and pulls before create when branch matches current branch", async () => {
     vi.mocked(gitUtils.getRepoInfo).mockReturnValue({
       repoRoot: "/repo",
       repoName: "my-repo",
       currentBranch: "main",
       defaultBranch: "main",
-      isWorktree: false,
     });
 
     const res = await app.request("/api/sessions/create", {
@@ -281,7 +226,6 @@ describe("POST /api/sessions/create", () => {
       repoName: "my-repo",
       currentBranch: "develop",
       defaultBranch: "main",
-      isWorktree: false,
     });
 
     const res = await app.request("/api/sessions/create", {
@@ -308,7 +252,6 @@ describe("POST /api/sessions/create", () => {
       repoName: "my-repo",
       currentBranch: "main",
       defaultBranch: "main",
-      isWorktree: false,
     });
     vi.mocked(gitUtils.gitFetch).mockReturnValueOnce({
       success: false,
@@ -336,7 +279,6 @@ describe("POST /api/sessions/create", () => {
       repoName: "my-repo",
       currentBranch: "main",
       defaultBranch: "main",
-      isWorktree: false,
     });
     vi.mocked(gitUtils.gitPull).mockReturnValueOnce({
       success: false,
@@ -512,56 +454,15 @@ describe("POST /api/sessions/:id/relaunch", () => {
 });
 
 describe("DELETE /api/sessions/:id", () => {
-  it("kills, removes, cleans up worktree, and closes session", async () => {
-    tracker.getBySession.mockReturnValue({
-      sessionId: "s1",
-      repoRoot: "/repo",
-      branch: "feat",
-      worktreePath: "/wt/feat",
-      createdAt: 1000,
-    });
-    tracker.isWorktreeInUse.mockReturnValue(false);
-    vi.mocked(gitUtils.isWorktreeDirty).mockReturnValue(false);
-    vi.mocked(gitUtils.removeWorktree).mockReturnValue({ removed: true });
-
+  it("kills, removes, and closes session", async () => {
     const res = await app.request("/api/sessions/s1", { method: "DELETE" });
 
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json).toMatchObject({ ok: true });
-    expect(json.worktree).toMatchObject({ cleaned: true, path: "/wt/feat" });
     expect(launcher.kill).toHaveBeenCalledWith("s1");
     expect(launcher.removeSession).toHaveBeenCalledWith("s1");
     expect(bridge.closeSession).toHaveBeenCalledWith("s1");
-    expect(tracker.removeBySession).toHaveBeenCalledWith("s1");
-    // No branchToDelete when actualBranch is not set
-    expect(gitUtils.removeWorktree).toHaveBeenCalledWith("/repo", "/wt/feat", {
-      force: false,
-      branchToDelete: undefined,
-    });
-  });
-
-  it("passes branchToDelete when actualBranch differs from branch", async () => {
-    tracker.getBySession.mockReturnValue({
-      sessionId: "s1",
-      repoRoot: "/repo",
-      branch: "main",
-      actualBranch: "main-wt-2",
-      worktreePath: "/wt/main",
-      createdAt: 1000,
-    });
-    tracker.isWorktreeInUse.mockReturnValue(false);
-    vi.mocked(gitUtils.isWorktreeDirty).mockReturnValue(false);
-    vi.mocked(gitUtils.removeWorktree).mockReturnValue({ removed: true });
-
-    const res = await app.request("/api/sessions/s1", { method: "DELETE" });
-
-    expect(res.status).toBe(200);
-    expect(gitUtils.removeWorktree).toHaveBeenCalledWith("/repo", "/wt/main", {
-      force: false,
-      branchToDelete: "main-wt-2",
-    });
-    expect(tracker.removeBySession).toHaveBeenCalledWith("s1");
   });
 });
 
@@ -851,7 +752,6 @@ describe("GET /api/git/repo-info", () => {
       repoName: "my-repo",
       currentBranch: "main",
       defaultBranch: "main",
-      isWorktree: false,
     };
     vi.mocked(gitUtils.getRepoInfo).mockReturnValue(info);
 
@@ -889,48 +789,6 @@ describe("GET /api/git/branches", () => {
   });
 });
 
-describe("POST /api/git/worktree", () => {
-  it("creates a worktree", async () => {
-    const result = {
-      worktreePath: "/home/.companion/worktrees/repo/feat",
-      branch: "feat",
-      actualBranch: "feat",
-      isNew: true,
-    };
-    vi.mocked(gitUtils.ensureWorktree).mockReturnValue(result);
-
-    const res = await app.request("/api/git/worktree", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ repoRoot: "/repo", branch: "feat", baseBranch: "main" }),
-    });
-
-    expect(res.status).toBe(200);
-    const json = await res.json();
-    expect(json).toEqual(result);
-    expect(gitUtils.ensureWorktree).toHaveBeenCalledWith("/repo", "feat", {
-      baseBranch: "main",
-      createBranch: undefined,
-    });
-  });
-});
-
-describe("DELETE /api/git/worktree", () => {
-  it("removes a worktree", async () => {
-    vi.mocked(gitUtils.removeWorktree).mockReturnValue({ removed: true });
-
-    const res = await app.request("/api/git/worktree", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ repoRoot: "/repo", worktreePath: "/wt/feat", force: true }),
-    });
-
-    expect(res.status).toBe(200);
-    const json = await res.json();
-    expect(json).toEqual({ removed: true });
-    expect(gitUtils.removeWorktree).toHaveBeenCalledWith("/repo", "/wt/feat", { force: true });
-  });
-});
 
 // ─── Session Naming ─────────────────────────────────────────────────────────
 

@@ -223,125 +223,17 @@ describe("launch", () => {
     expect(mockSpawn).not.toHaveBeenCalled();
   });
 
-  it("stores worktree metadata when worktreeInfo provided", () => {
+  it("stores container metadata when containerId provided", () => {
     const info = launcher.launch({
-      cwd: "/tmp/worktrees/feature-branch",
-      worktreeInfo: {
-        isWorktree: true,
-        repoRoot: "/tmp/main-repo",
-        branch: "feature-branch",
-        actualBranch: "feature-branch",
-        worktreePath: "/tmp/worktrees/feature-branch",
-      },
+      cwd: "/tmp/project",
+      containerId: "abc123def456",
+      containerName: "companion-session-1",
+      containerImage: "ubuntu:22.04",
     });
 
-    expect(info.isWorktree).toBe(true);
-    expect(info.repoRoot).toBe("/tmp/main-repo");
-    expect(info.branch).toBe("feature-branch");
-    expect(info.actualBranch).toBe("feature-branch");
-  });
-
-  it("injects worktree guardrails when isWorktree=true", () => {
-    // existsSync returns true for the worktree path (it exists on disk)
-    mockExistsSync.mockImplementation((path: string) => {
-      if (path === "/tmp/worktrees/feature-x") return true;
-      if (typeof path === "string" && path.includes(".claude")) return false;
-      return false;
-    });
-
-    launcher.launch({
-      cwd: "/tmp/worktrees/feature-x",
-      worktreeInfo: {
-        isWorktree: true,
-        repoRoot: "/tmp/main-repo",
-        branch: "feature-x",
-        actualBranch: "feature-x",
-        worktreePath: "/tmp/worktrees/feature-x",
-      },
-    });
-
-    // Should create .claude directory
-    expect(mockMkdirSync).toHaveBeenCalledWith(
-      join("/tmp/worktrees/feature-x", ".claude"),
-      { recursive: true },
-    );
-
-    // Should write CLAUDE.md with guardrails content
-    expect(mockWriteFileSync).toHaveBeenCalled();
-    const writeCall = mockWriteFileSync.mock.calls[0];
-    expect(writeCall[0]).toBe(
-      join("/tmp/worktrees/feature-x", ".claude", "CLAUDE.md"),
-    );
-    const content = writeCall[1] as string;
-    expect(content).toContain("WORKTREE_GUARDRAILS_START");
-    expect(content).toContain("feature-x");
-    expect(content).toContain("/tmp/main-repo");
-    expect(content).toContain("DO NOT run `git checkout`");
-  });
-
-  it("injects guardrails with parent branch label when actualBranch differs", () => {
-    mockExistsSync.mockImplementation((path: string) => {
-      if (path === "/tmp/worktrees/main-wt-2") return true;
-      if (typeof path === "string" && path.includes(".claude")) return false;
-      return false;
-    });
-
-    launcher.launch({
-      cwd: "/tmp/worktrees/main-wt-2",
-      worktreeInfo: {
-        isWorktree: true,
-        repoRoot: "/tmp/main-repo",
-        branch: "main",
-        actualBranch: "main-wt-2",
-        worktreePath: "/tmp/worktrees/main-wt-2",
-      },
-    });
-
-    expect(mockWriteFileSync).toHaveBeenCalled();
-    const content = mockWriteFileSync.mock.calls[0][1] as string;
-    // Should mention the actual branch and the parent branch
-    expect(content).toContain("main-wt-2");
-    expect(content).toContain("(created from `main`)");
-    expect(content).toContain("MUST stay on the `main-wt-2` branch");
-  });
-
-  it("does NOT inject guardrails when worktree path equals main repo root", () => {
-    mockExistsSync.mockReturnValue(true);
-
-    launcher.launch({
-      cwd: "/tmp/main-repo",
-      worktreeInfo: {
-        isWorktree: true,
-        repoRoot: "/tmp/main-repo",
-        branch: "main",
-        actualBranch: "main",
-        worktreePath: "/tmp/main-repo",
-      },
-    });
-
-    // Should NOT write CLAUDE.md — worktree path is the main repo
-    expect(mockWriteFileSync).not.toHaveBeenCalled();
-    expect(mockMkdirSync).not.toHaveBeenCalled();
-  });
-
-  it("does NOT inject guardrails when worktree path does not exist on disk", () => {
-    // Worktree path doesn't exist (git worktree add failed or not yet run)
-    mockExistsSync.mockReturnValue(false);
-
-    launcher.launch({
-      cwd: "/tmp/worktrees/nonexistent",
-      worktreeInfo: {
-        isWorktree: true,
-        repoRoot: "/tmp/main-repo",
-        branch: "feature-y",
-        actualBranch: "feature-y",
-        worktreePath: "/tmp/worktrees/nonexistent",
-      },
-    });
-
-    // Should NOT write CLAUDE.md — path doesn't exist
-    expect(mockWriteFileSync).not.toHaveBeenCalled();
-    expect(mockMkdirSync).not.toHaveBeenCalled();
+    expect(info.containerId).toBe("abc123def456");
+    expect(info.containerName).toBe("companion-session-1");
+    expect(info.containerImage).toBe("ubuntu:22.04");
   });
 
   it("sets session pid from spawned process", () => {

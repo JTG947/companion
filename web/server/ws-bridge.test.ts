@@ -82,7 +82,7 @@ describe("Session management", () => {
     expect(session.state.context_used_percent).toBe(0);
     expect(session.state.is_compacting).toBe(false);
     expect(session.state.git_branch).toBe("");
-    expect(session.state.is_worktree).toBe(false);
+    expect(session.state.is_containerized).toBe(false);
     expect(session.state.repo_root).toBe("");
     expect(session.state.git_ahead).toBe(0);
     expect(session.state.git_behind).toBe(0);

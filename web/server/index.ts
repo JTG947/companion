@@ -15,7 +15,9 @@ import { createRoutes } from "./routes.js";
 import { CliLauncher } from "./cli-launcher.js";
 import { WsBridge } from "./ws-bridge.js";
 import { SessionStore } from "./session-store.js";
-import { WorktreeTracker } from "./worktree-tracker.js";
+import { containerManager } from "./container-manager.js";
+import { join } from "node:path";
+import { homedir } from "node:os";
 import { TerminalManager } from "./terminal-manager.js";
 import { generateSessionTitle } from "./auto-namer.js";
 import * as sessionNames from "./session-names.js";
@@ -39,7 +41,7 @@ const port = Number(process.env.PORT) || defaultPort;
 const sessionStore = new SessionStore();
 const wsBridge = new WsBridge();
 const launcher = new CliLauncher(port);
-const worktreeTracker = new WorktreeTracker();
+const CONTAINER_STATE_PATH = join(homedir(), ".companion", "containers.json");
 const terminalManager = new TerminalManager();
 const prPoller = new PRPoller(wsBridge);
 const recorder = new RecorderManager();
@@ -53,6 +55,7 @@ launcher.setStore(sessionStore);
 launcher.setRecorder(recorder);
 launcher.restoreFromDisk();
 wsBridge.restoreFromDisk();
+containerManager.restoreState(CONTAINER_STATE_PATH);
 
 // When the CLI reports its internal session_id, store it for --resume on relaunch
 wsBridge.onCLISessionIdReceived((sessionId, cliSessionId) => {
@@ -122,7 +125,7 @@ if (recorder.isGloballyEnabled()) {
 const app = new Hono();
 
 app.use("/api/*", cors());
-app.route("/api", createRoutes(launcher, wsBridge, sessionStore, worktreeTracker, terminalManager, prPoller, recorder, cronScheduler, assistantManager));
+app.route("/api", createRoutes(launcher, wsBridge, sessionStore, null, terminalManager, prPoller, recorder, cronScheduler, assistantManager));
 
 // In production, serve built frontend using absolute path (works when installed as npm package)
 if (process.env.NODE_ENV === "production") {
@@ -232,6 +235,15 @@ if (isRunningAsService()) {
   setServiceMode(true);
   console.log("[server] Running as background service (auto-update available)");
 }
+
+// ── Graceful shutdown — persist container state ──────────────────────────────
+function gracefulShutdown() {
+  console.log("[server] Persisting container state before shutdown...");
+  containerManager.persistState(CONTAINER_STATE_PATH);
+  process.exit(0);
+}
+process.on("SIGTERM", gracefulShutdown);
+process.on("SIGINT", gracefulShutdown);
 
 // ── Reconnection watchdog ────────────────────────────────────────────────────
 // After a server restart, restored CLI processes may not reconnect their

@@ -81,7 +81,7 @@ interface Session {
   processedClientMessageIdSet: Set<string>;
 }
 
-type GitSessionKey = "git_branch" | "is_worktree" | "repo_root" | "git_ahead" | "git_behind";
+type GitSessionKey = "git_branch" | "is_containerized" | "repo_root" | "git_ahead" | "git_behind";
 
 function makeDefaultState(sessionId: string, backendType: BackendType = "claude"): SessionState {
   return {
@@ -101,7 +101,7 @@ function makeDefaultState(sessionId: string, backendType: BackendType = "claude"
     context_used_percent: 0,
     is_compacting: false,
     git_branch: "",
-    is_worktree: false,
+    is_containerized: false,
     repo_root: "",
     git_ahead: 0,
     git_behind: 0,
@@ -114,31 +114,17 @@ function makeDefaultState(sessionId: string, backendType: BackendType = "claude"
 
 function resolveGitInfo(state: SessionState): void {
   if (!state.cwd) return;
+  // Preserve is_containerized — it's set during session launch, not derived from git
+  const wasContainerized = state.is_containerized;
   try {
     state.git_branch = execSync("git rev-parse --abbrev-ref HEAD", {
       cwd: state.cwd, encoding: "utf-8", timeout: 3000,
     }).trim();
 
     try {
-      const gitDir = execSync("git rev-parse --git-dir", {
+      state.repo_root = execSync("git rev-parse --show-toplevel", {
         cwd: state.cwd, encoding: "utf-8", timeout: 3000,
       }).trim();
-      state.is_worktree = gitDir.includes("/worktrees/");
-    } catch { /* ignore */ }
-
-    try {
-      if (state.is_worktree) {
-        // For worktrees, --show-toplevel returns the worktree dir, not the original repo.
-        // Use --git-common-dir to find the shared .git dir, then derive the repo root.
-        const commonDir = execSync("git rev-parse --git-common-dir", {
-          cwd: state.cwd, encoding: "utf-8", timeout: 3000,
-        }).trim();
-        state.repo_root = resolve(state.cwd, commonDir, "..");
-      } else {
-        state.repo_root = execSync("git rev-parse --show-toplevel", {
-          cwd: state.cwd, encoding: "utf-8", timeout: 3000,
-        }).trim();
-      }
     } catch { /* ignore */ }
 
     try {
@@ -156,11 +142,11 @@ function resolveGitInfo(state: SessionState): void {
   } catch {
     // Not a git repo or git not available
     state.git_branch = "";
-    state.is_worktree = false;
     state.repo_root = "";
     state.git_ahead = 0;
     state.git_behind = 0;
   }
+  state.is_containerized = wasContainerized;
 }
 
 // ─── Bridge ───────────────────────────────────────────────────────────────────
@@ -190,7 +176,7 @@ export class WsBridge {
   private onGitInfoReady: ((sessionId: string, cwd: string, branch: string) => void) | null = null;
   private static readonly GIT_SESSION_KEYS: GitSessionKey[] = [
     "git_branch",
-    "is_worktree",
+    "is_containerized",
     "repo_root",
     "git_ahead",
     "git_behind",
@@ -297,7 +283,7 @@ export class WsBridge {
   ): void {
     const before = {
       git_branch: session.state.git_branch,
-      is_worktree: session.state.is_worktree,
+      is_containerized: session.state.is_containerized,
       repo_root: session.state.repo_root,
       git_ahead: session.state.git_ahead,
       git_behind: session.state.git_behind,
@@ -319,7 +305,7 @@ export class WsBridge {
           type: "session_update",
           session: {
             git_branch: session.state.git_branch,
-            is_worktree: session.state.is_worktree,
+            is_containerized: session.state.is_containerized,
             repo_root: session.state.repo_root,
             git_ahead: session.state.git_ahead,
             git_behind: session.state.git_behind,

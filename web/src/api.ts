@@ -193,7 +193,6 @@ export interface CreateSessionOpts {
   envSlug?: string;
   branch?: string;
   createBranch?: boolean;
-  useWorktree?: boolean;
   backend?: "claude" | "codex";
   container?: ContainerCreateOpts;
 }
@@ -215,36 +214,28 @@ export interface GitRepoInfo {
   repoName: string;
   currentBranch: string;
   defaultBranch: string;
-  isWorktree: boolean;
 }
 
 export interface GitBranchInfo {
   name: string;
   isCurrent: boolean;
   isRemote: boolean;
-  worktreePath: string | null;
   ahead: number;
   behind: number;
-}
-
-export interface GitWorktreeInfo {
-  path: string;
-  branch: string;
-  head: string;
-  isMainWorktree: boolean;
-  isDirty: boolean;
-}
-
-export interface WorktreeCreateResult {
-  worktreePath: string;
-  branch: string;
-  isNew: boolean;
 }
 
 export interface CompanionEnv {
   name: string;
   slug: string;
   variables: Record<string, string>;
+  dockerfile?: string;
+  imageTag?: string;
+  baseImage?: string;
+  buildStatus?: "idle" | "building" | "success" | "error";
+  buildError?: string;
+  lastBuiltAt?: number;
+  ports?: number[];
+  volumes?: string[];
   createdAt: number;
   updatedAt: number;
 }
@@ -408,13 +399,37 @@ export const api = {
   listEnvs: () => get<CompanionEnv[]>("/envs"),
   getEnv: (slug: string) =>
     get<CompanionEnv>(`/envs/${encodeURIComponent(slug)}`),
-  createEnv: (name: string, variables: Record<string, string>) =>
-    post<CompanionEnv>("/envs", { name, variables }),
+  createEnv: (name: string, variables: Record<string, string>, docker?: {
+    dockerfile?: string;
+    baseImage?: string;
+    ports?: number[];
+    volumes?: string[];
+  }) =>
+    post<CompanionEnv>("/envs", { name, variables, ...docker }),
   updateEnv: (
     slug: string,
-    data: { name?: string; variables?: Record<string, string> },
+    data: {
+      name?: string;
+      variables?: Record<string, string>;
+      dockerfile?: string;
+      baseImage?: string;
+      ports?: number[];
+      volumes?: string[];
+    },
   ) => put<CompanionEnv>(`/envs/${encodeURIComponent(slug)}`, data),
   deleteEnv: (slug: string) => del(`/envs/${encodeURIComponent(slug)}`),
+
+  // Environment Docker builds
+  buildEnvImage: (slug: string) =>
+    post<{ ok: boolean; imageTag: string }>(`/envs/${encodeURIComponent(slug)}/build`),
+  getEnvBuildStatus: (slug: string) =>
+    get<{ buildStatus: string; buildError?: string; lastBuiltAt?: number; imageTag?: string }>(
+      `/envs/${encodeURIComponent(slug)}/build-status`,
+    ),
+  buildBaseImage: () =>
+    post<{ ok: boolean; tag: string }>("/docker/build-base"),
+  getBaseImageStatus: () =>
+    get<{ exists: boolean; tag: string }>("/docker/base-image"),
 
   // Settings
   getSettings: () => get<AppSettings>("/settings"),
@@ -428,22 +443,6 @@ export const api = {
     get<GitBranchInfo[]>(
       `/git/branches?repoRoot=${encodeURIComponent(repoRoot)}`,
     ),
-  listWorktrees: (repoRoot: string) =>
-    get<GitWorktreeInfo[]>(
-      `/git/worktrees?repoRoot=${encodeURIComponent(repoRoot)}`,
-    ),
-  createWorktree: (
-    repoRoot: string,
-    branch: string,
-    opts?: { baseBranch?: string; createBranch?: boolean },
-  ) =>
-    post<WorktreeCreateResult>("/git/worktree", { repoRoot, branch, ...opts }),
-  removeWorktree: (repoRoot: string, worktreePath: string, force?: boolean) =>
-    del<{ removed: boolean; reason?: string }>("/git/worktree", {
-      repoRoot,
-      worktreePath,
-      force,
-    }),
   gitFetch: (repoRoot: string) =>
     post<{ success: boolean; output: string }>("/git/fetch", { repoRoot }),
   gitPull: (cwd: string) =>

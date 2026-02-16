@@ -2,8 +2,6 @@ import { randomUUID } from "node:crypto";
 import {
   mkdirSync,
   existsSync,
-  readFileSync,
-  writeFileSync,
   copyFileSync,
   cpSync,
   realpathSync,
@@ -32,14 +30,6 @@ export interface SdkSessionInfo {
   /** The CLI's internal session ID (from system.init), used for --resume */
   cliSessionId?: string;
   archived?: boolean;
-  /** Whether this session uses a git worktree */
-  isWorktree?: boolean;
-  /** The original repo root path */
-  repoRoot?: string;
-  /** Conceptual branch this session is working on (what user selected) */
-  branch?: string;
-  /** Actual git branch in the worktree (may differ for -wt-N branches) */
-  actualBranch?: string;
   /** User-facing session name */
   name?: string;
   /** Which backend this session uses */
@@ -62,6 +52,14 @@ export interface SdkSessionInfo {
   cronJobId?: string;
   /** Human-readable name of the cron job that spawned this session */
   cronJobName?: string;
+
+  // Container fields
+  /** Docker container ID when session runs inside a container */
+  containerId?: string;
+  /** Docker container name */
+  containerName?: string;
+  /** Docker image used for the container */
+  containerImage?: string;
 }
 
 export interface LaunchOptions {
@@ -79,14 +77,12 @@ export interface LaunchOptions {
   codexInternetAccess?: boolean;
   /** Optional override for CODEX_HOME used by Codex sessions. */
   codexHome?: string;
-  /** Pre-resolved worktree info from the session creation flow */
-  worktreeInfo?: {
-    isWorktree: boolean;
-    repoRoot: string;
-    branch: string;
-    actualBranch: string;
-    worktreePath: string;
-  };
+  /** Docker container ID — when set, CLI runs inside container via docker exec */
+  containerId?: string;
+  /** Docker container name */
+  containerName?: string;
+  /** Docker image used for the container */
+  containerImage?: string;
 }
 
 /**
@@ -193,12 +189,11 @@ export class CliLauncher {
       info.codexSandbox = options.codexSandbox;
     }
 
-    // Store worktree metadata if provided
-    if (options.worktreeInfo) {
-      info.isWorktree = options.worktreeInfo.isWorktree;
-      info.repoRoot = options.worktreeInfo.repoRoot;
-      info.branch = options.worktreeInfo.branch;
-      info.actualBranch = options.worktreeInfo.actualBranch;
+    // Store container metadata if provided
+    if (options.containerId) {
+      info.containerId = options.containerId;
+      info.containerName = options.containerName;
+      info.containerImage = options.containerImage;
     }
 
     this.sessions.set(sessionId, info);
@@ -245,6 +240,9 @@ export class CliLauncher {
         cwd: info.cwd,
         codexSandbox: info.codexSandbox,
         codexInternetAccess: info.codexInternetAccess,
+        containerId: info.containerId,
+        containerName: info.containerName,
+        containerImage: info.containerImage,
       });
     } else {
       this.spawnCLI(sessionId, info, {
@@ -252,6 +250,9 @@ export class CliLauncher {
         permissionMode: info.permissionMode,
         cwd: info.cwd,
         resumeSessionId: info.cliSessionId,
+        containerId: info.containerId,
+        containerName: info.containerName,
+        containerImage: info.containerImage,
       });
     }
     return true;
@@ -265,19 +266,29 @@ export class CliLauncher {
   }
 
   private spawnCLI(sessionId: string, info: SdkSessionInfo, options: LaunchOptions & { resumeSessionId?: string }): void {
+    const isContainerized = !!options.containerId;
+
+    // For containerized sessions, the CLI binary lives inside the container.
+    // For host sessions, resolve the binary on the host.
     let binary = options.claudeBinary || "claude";
-    const resolved = resolveBinary(binary);
-    if (resolved) {
-      binary = resolved;
-    } else {
-      console.error(`[cli-launcher] Binary "${binary}" not found in PATH`);
-      info.state = "exited";
-      info.exitCode = 127;
-      this.persistState();
-      return;
+    if (!isContainerized) {
+      const resolved = resolveBinary(binary);
+      if (resolved) {
+        binary = resolved;
+      } else {
+        console.error(`[cli-launcher] Binary "${binary}" not found in PATH`);
+        info.state = "exited";
+        info.exitCode = 127;
+        this.persistState();
+        return;
+      }
     }
 
-    const sdkUrl = `ws://localhost:${this.port}/ws/cli/${sessionId}`;
+    // When running inside a container, the SDK URL must use host.docker.internal
+    // so the CLI can connect back to the Hono server running on the host.
+    const sdkUrl = isContainerized
+      ? `ws://host.docker.internal:${this.port}/ws/cli/${sessionId}`
+      : `ws://localhost:${this.port}/ws/cli/${sessionId}`;
 
     const args: string[] = [
       "--sdk-url", sdkUrl,
@@ -299,16 +310,6 @@ export class CliLauncher {
       }
     }
 
-    // Inject CLAUDE.md guardrails for worktree sessions
-    if (info.isWorktree && info.branch) {
-      this.injectWorktreeGuardrails(
-        info.cwd,
-        info.actualBranch || info.branch,
-        info.repoRoot || "",
-        info.actualBranch && info.actualBranch !== info.branch ? info.branch : undefined,
-      );
-    }
-
     // Always pass -p "" for headless mode. When relaunching, also pass --resume
     // to restore the CLI's conversation context.
     if (options.resumeSessionId) {
@@ -316,20 +317,48 @@ export class CliLauncher {
     }
     args.push("-p", "");
 
-    // Use enriched PATH so spawned CLI processes inherit the user's
-    // full PATH (nvm, volta, etc.) regardless of how the server started.
-    const env: Record<string, string | undefined> = {
-      ...process.env,
-      CLAUDECODE: undefined,
-      ...options.env,
-      PATH: getEnrichedPath(),
-    };
+    let spawnCmd: string[];
+    let spawnEnv: Record<string, string | undefined>;
+    let spawnCwd: string | undefined;
 
-    console.log(`[cli-launcher] Spawning session ${sessionId}: ${binary} ${args.join(" ")}`);
+    if (isContainerized) {
+      // Run CLI inside the container via docker exec.
+      // Environment variables are passed via -e flags to docker exec.
+      const dockerArgs = ["docker", "exec"];
 
-    const proc = Bun.spawn([binary, ...args], {
-      cwd: info.cwd,
-      env,
+      // Pass env vars via -e flags
+      if (options.env) {
+        for (const [k, v] of Object.entries(options.env)) {
+          dockerArgs.push("-e", `${k}=${v}`);
+        }
+      }
+      // Ensure CLAUDECODE is unset inside container
+      dockerArgs.push("-e", "CLAUDECODE=");
+
+      dockerArgs.push(options.containerName || options.containerId!);
+      dockerArgs.push(binary, ...args);
+
+      spawnCmd = dockerArgs;
+      // Host env for the docker CLI itself
+      spawnEnv = { ...process.env, PATH: getEnrichedPath() };
+      spawnCwd = undefined; // cwd is set inside the container via -w at creation
+    } else {
+      // Host-based spawn (original behavior)
+      spawnCmd = [binary, ...args];
+      spawnEnv = {
+        ...process.env,
+        CLAUDECODE: undefined,
+        ...options.env,
+        PATH: getEnrichedPath(),
+      };
+      spawnCwd = info.cwd;
+    }
+
+    console.log(`[cli-launcher] Spawning session ${sessionId}${isContainerized ? " (container)" : ""}: ${spawnCmd.join(" ")}`);
+
+    const proc = Bun.spawn(spawnCmd, {
+      cwd: spawnCwd,
+      env: spawnEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -409,16 +438,20 @@ export class CliLauncher {
   }
 
   private spawnCodex(sessionId: string, info: SdkSessionInfo, options: LaunchOptions): void {
+    const isContainerized = !!options.containerId;
+
     let binary = options.codexBinary || "codex";
-    const resolved = resolveBinary(binary);
-    if (resolved) {
-      binary = resolved;
-    } else {
-      console.error(`[cli-launcher] Binary "${binary}" not found in PATH`);
-      info.state = "exited";
-      info.exitCode = 127;
-      this.persistState();
-      return;
+    if (!isContainerized) {
+      const resolved = resolveBinary(binary);
+      if (resolved) {
+        binary = resolved;
+      } else {
+        console.error(`[cli-launcher] Binary "${binary}" not found in PATH`);
+        info.state = "exited";
+        info.exitCode = 127;
+        this.persistState();
+        return;
+      }
     }
 
     const args: string[] = ["app-server"];
@@ -428,48 +461,68 @@ export class CliLauncher {
       sessionId,
       options.codexHome,
     );
-    this.prepareCodexHome(codexHome);
-
-    // The codex binary is a Node.js script with `#!/usr/bin/env node` shebang.
-    // When Bun.spawn executes it, the kernel resolves `node` via /usr/bin/env
-    // which may find the system Node (e.g. v12) instead of the nvm-managed one.
-    // To guarantee the correct Node version, we resolve the `node` binary that
-    // lives alongside `codex` and spawn `node <codex.js>` directly.
-    const binaryDir = resolve(binary, "..");
-    const siblingNode = join(binaryDir, "node");
-    const enrichedPath = getEnrichedPath();
-    const spawnPath = [binaryDir, ...enrichedPath.split(":")].filter(Boolean).join(":");
-
-    // Determine whether to invoke node explicitly or use the binary directly.
-    // If a `node` binary exists next to `codex`, use it to bypass shebang issues.
-    let spawnCmd: string[];
-    if (existsSync(siblingNode)) {
-      // Resolve the real path of the codex script (follows symlinks)
-      // so node can load it as an ES module with the correct package.json context.
-      let codexScript: string;
-      try {
-        codexScript = realpathSync(binary);
-      } catch {
-        codexScript = binary;
-      }
-      spawnCmd = [siblingNode, codexScript, ...args];
-    } else {
-      spawnCmd = [binary, ...args];
+    if (!isContainerized) {
+      this.prepareCodexHome(codexHome);
     }
 
-    const env: Record<string, string | undefined> = {
-      ...process.env,
-      CLAUDECODE: undefined,
-      ...options.env,
-      CODEX_HOME: codexHome,
-      PATH: spawnPath,
-    };
+    let spawnCmd: string[];
+    let spawnEnv: Record<string, string | undefined>;
+    let spawnCwd: string | undefined;
 
-    console.log(`[cli-launcher] Spawning Codex session ${sessionId}: ${spawnCmd.join(" ")}`);
+    if (isContainerized) {
+      // Run Codex inside the container via docker exec -i (stdin required for JSON-RPC)
+      const dockerArgs = ["docker", "exec", "-i"];
+      if (options.env) {
+        for (const [k, v] of Object.entries(options.env)) {
+          dockerArgs.push("-e", `${k}=${v}`);
+        }
+      }
+      dockerArgs.push("-e", "CLAUDECODE=");
+      dockerArgs.push(options.containerName || options.containerId!);
+      dockerArgs.push(binary, ...args);
+
+      spawnCmd = dockerArgs;
+      spawnEnv = { ...process.env, PATH: getEnrichedPath() };
+      spawnCwd = undefined;
+    } else {
+      // Host-based spawn — resolve node/shebang issues
+      // The codex binary is a Node.js script with `#!/usr/bin/env node` shebang.
+      // When Bun.spawn executes it, the kernel resolves `node` via /usr/bin/env
+      // which may find the system Node (e.g. v12) instead of the nvm-managed one.
+      // To guarantee the correct Node version, we resolve the `node` binary that
+      // lives alongside `codex` and spawn `node <codex.js>` directly.
+      const binaryDir = resolve(binary, "..");
+      const siblingNode = join(binaryDir, "node");
+      const enrichedPath = getEnrichedPath();
+      const spawnPath = [binaryDir, ...enrichedPath.split(":")].filter(Boolean).join(":");
+
+      if (existsSync(siblingNode)) {
+        let codexScript: string;
+        try {
+          codexScript = realpathSync(binary);
+        } catch {
+          codexScript = binary;
+        }
+        spawnCmd = [siblingNode, codexScript, ...args];
+      } else {
+        spawnCmd = [binary, ...args];
+      }
+
+      spawnEnv = {
+        ...process.env,
+        CLAUDECODE: undefined,
+        ...options.env,
+        CODEX_HOME: codexHome,
+        PATH: spawnPath,
+      };
+      spawnCwd = info.cwd;
+    }
+
+    console.log(`[cli-launcher] Spawning Codex session ${sessionId}${isContainerized ? " (container)" : ""}: ${spawnCmd.join(" ")}`);
 
     const proc = Bun.spawn(spawnCmd, {
-      cwd: info.cwd,
-      env,
+      cwd: spawnCwd,
+      env: spawnEnv,
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
@@ -536,68 +589,6 @@ export class CliLauncher {
     this.persistState();
   }
 
-
-  /**
-   * Inject a CLAUDE.md file into the worktree with branch guardrails.
-   * Only injects into actual worktree directories, never the main repo.
-   */
-  private injectWorktreeGuardrails(worktreePath: string, branch: string, repoRoot: string, parentBranch?: string): void {
-    // Safety: never inject guardrails into the main repository itself
-    if (worktreePath === repoRoot) {
-      console.warn(`[cli-launcher] Skipping guardrails injection: worktree path is the main repo (${repoRoot})`);
-      return;
-    }
-
-    // Safety: only inject if the worktree directory actually exists (created by git worktree add)
-    if (!existsSync(worktreePath)) {
-      console.warn(`[cli-launcher] Skipping guardrails injection: worktree path does not exist (${worktreePath})`);
-      return;
-    }
-
-    const branchLabel = parentBranch
-      ? `\`${branch}\` (created from \`${parentBranch}\`)`
-      : `\`${branch}\``;
-
-    const MARKER_START = "<!-- WORKTREE_GUARDRAILS_START -->";
-    const MARKER_END = "<!-- WORKTREE_GUARDRAILS_END -->";
-    const guardrails = `${MARKER_START}
-# Worktree Session — Branch Guardrails
-
-You are working on branch: ${branchLabel}
-This is a git worktree. The main repository is at: \`${repoRoot}\`
-
-**Rules:**
-1. DO NOT run \`git checkout\`, \`git switch\`, or any command that changes the current branch
-2. All your work MUST stay on the \`${branch}\` branch
-3. When committing, commit to \`${branch}\` only
-4. If you need to reference code from another branch, use \`git show other-branch:path/to/file\`
-${MARKER_END}`;
-
-    const claudeDir = join(worktreePath, ".claude");
-    const claudeMdPath = join(claudeDir, "CLAUDE.md");
-
-    try {
-      mkdirSync(claudeDir, { recursive: true });
-
-      if (existsSync(claudeMdPath)) {
-        const existing = readFileSync(claudeMdPath, "utf-8");
-        // Replace existing guardrails section or append
-        if (existing.includes(MARKER_START)) {
-          const before = existing.substring(0, existing.indexOf(MARKER_START));
-          const afterIdx = existing.indexOf(MARKER_END);
-          const after = afterIdx >= 0 ? existing.substring(afterIdx + MARKER_END.length) : "";
-          writeFileSync(claudeMdPath, before + guardrails + after, "utf-8");
-        } else {
-          writeFileSync(claudeMdPath, existing + "\n\n" + guardrails, "utf-8");
-        }
-      } else {
-        writeFileSync(claudeMdPath, guardrails, "utf-8");
-      }
-      console.log(`[cli-launcher] Injected worktree guardrails for branch ${branch}`);
-    } catch (e) {
-      console.warn(`[cli-launcher] Failed to inject worktree guardrails:`, e);
-    }
-  }
 
   /**
    * Mark a session as connected (called when CLI establishes WS connection).

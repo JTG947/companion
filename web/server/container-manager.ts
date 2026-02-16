@@ -1,4 +1,12 @@
 import { execSync, type ExecSyncOptionsWithStringEncoding } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -214,6 +222,19 @@ export class ContainerManager {
   }
 
   /**
+   * Execute a command inside a running container.
+   * Returns the stdout output. Throws on failure.
+   */
+  execInContainer(containerId: string, cmd: string[], timeout = 30_000): string {
+    const dockerCmd = [
+      "docker", "exec",
+      shellEscape(containerId),
+      ...cmd.map(shellEscape),
+    ].join(" ");
+    return exec(dockerCmd, { encoding: "utf-8", timeout });
+  }
+
+  /**
    * Re-track a container under a new key (e.g. when the real sessionId
    * is assigned after container creation).
    */
@@ -285,6 +306,57 @@ export class ContainerManager {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Persistence — survive server restarts
+  // ---------------------------------------------------------------------------
+
+  /** Persist all tracked container info to disk. */
+  persistState(filePath: string): void {
+    try {
+      const entries: { sessionId: string; info: ContainerInfo }[] = [];
+      for (const [sessionId, info] of this.containers) {
+        if (info.state !== "removed") {
+          entries.push({ sessionId, info });
+        }
+      }
+      writeFileSync(filePath, JSON.stringify(entries, null, 2), "utf-8");
+    } catch (e) {
+      console.warn(
+        "[container-manager] Failed to persist state:",
+        e instanceof Error ? e.message : String(e),
+      );
+    }
+  }
+
+  /** Restore container tracking from disk, verifying each container still exists. */
+  restoreState(filePath: string): number {
+    if (!existsSync(filePath)) return 0;
+    try {
+      const raw = readFileSync(filePath, "utf-8");
+      const entries: { sessionId: string; info: ContainerInfo }[] = JSON.parse(raw);
+      let restored = 0;
+      for (const { sessionId, info } of entries) {
+        if (this.restoreContainer(sessionId, info)) {
+          restored++;
+        }
+      }
+      if (restored > 0) {
+        console.log(`[container-manager] Restored ${restored} container(s) from disk`);
+      }
+      return restored;
+    } catch (e) {
+      console.warn(
+        "[container-manager] Failed to restore state:",
+        e instanceof Error ? e.message : String(e),
+      );
+      return 0;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Image building
+  // ---------------------------------------------------------------------------
+
   /**
    * Build the companion-dev Docker image from the Dockerfile.dev.
    * Returns the build output log. Throws on failure.
@@ -303,6 +375,85 @@ export class ContainerManager {
         `Failed to build image ${tag}: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
+  }
+
+  /**
+   * Build a Docker image from inline Dockerfile content using Bun.spawn for streaming output.
+   * Writes the Dockerfile to a temp directory and runs docker build.
+   */
+  async buildImageStreaming(
+    dockerfileContent: string,
+    tag: string,
+    onProgress?: (line: string) => void,
+  ): Promise<{ success: boolean; log: string }> {
+    // Write Dockerfile to temp dir
+    const buildDir = join(tmpdir(), `companion-build-${Date.now()}`);
+    mkdirSync(buildDir, { recursive: true });
+    const dockerfilePath = join(buildDir, "Dockerfile");
+    writeFileSync(dockerfilePath, dockerfileContent, "utf-8");
+
+    const args = [
+      "docker", "build",
+      "-t", tag,
+      "-f", dockerfilePath,
+      buildDir,
+    ];
+
+    const proc = Bun.spawn(args, {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const lines: string[] = [];
+
+    // Read stdout line by line
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n");
+        buffer = parts.pop() || "";
+        for (const line of parts) {
+          if (line.trim()) {
+            lines.push(line);
+            onProgress?.(line);
+          }
+        }
+      }
+      // Flush remaining buffer
+      if (buffer.trim()) {
+        lines.push(buffer);
+        onProgress?.(buffer);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    // Also capture stderr
+    const stderrText = await new Response(proc.stderr).text();
+    if (stderrText.trim()) {
+      for (const line of stderrText.split("\n")) {
+        if (line.trim()) {
+          lines.push(line);
+          onProgress?.(line);
+        }
+      }
+    }
+
+    const exitCode = await proc.exited;
+    const log = lines.join("\n");
+
+    if (exitCode === 0) {
+      console.log(`[container-manager] Built image ${tag} (streaming)`);
+      return { success: true, log };
+    }
+
+    return { success: false, log };
   }
 
   /** Clean up all tracked containers (e.g. on server shutdown). */
