@@ -1,8 +1,9 @@
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { useStore } from "./store.js";
 import { connectSession } from "./ws.js";
 import { api } from "./api.js";
 import { capturePageView } from "./analytics.js";
+import { parseHash, navigateToSession } from "./utils/routing.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { ChatView } from "./components/ChatView.js";
 import { TopBar } from "./components/TopBar.js";
@@ -32,11 +33,12 @@ export default function App() {
   const activeTab = useStore((s) => s.activeTab);
   const assistantSessionId = useStore((s) => s.assistantSessionId);
   const hash = useHash();
-  const isSettingsPage = hash === "#/settings";
-  const isTerminalPage = hash === "#/terminal";
-  const isEnvironmentsPage = hash === "#/environments";
-  const isScheduledPage = hash === "#/scheduled";
-  const isSessionView = !isSettingsPage && !isTerminalPage && !isEnvironmentsPage && !isScheduledPage;
+  const route = useMemo(() => parseHash(hash), [hash]);
+  const isSettingsPage = route.page === "settings";
+  const isTerminalPage = route.page === "terminal";
+  const isEnvironmentsPage = route.page === "environments";
+  const isScheduledPage = route.page === "scheduled";
+  const isSessionView = route.page === "session" || route.page === "home";
 
   useEffect(() => {
     capturePageView(hash || "#/");
@@ -46,11 +48,30 @@ export default function App() {
     document.documentElement.classList.toggle("dark", darkMode);
   }, [darkMode]);
 
-  // Auto-connect to restored session on mount
+  // Sync hash → store: when the hash contains a session ID, update the store and connect
+  useEffect(() => {
+    if (route.page === "session") {
+      const store = useStore.getState();
+      if (store.currentSessionId !== route.sessionId) {
+        store.setCurrentSession(route.sessionId);
+      }
+      connectSession(route.sessionId);
+    } else if (route.page === "home") {
+      const store = useStore.getState();
+      if (store.currentSessionId !== null) {
+        store.setCurrentSession(null);
+      }
+    }
+    // For other pages (settings, terminal, etc.), preserve currentSessionId
+  }, [route]);
+
+  // On mount: if the URL has no session hash but localStorage has a session, populate the URL.
+  // If the URL already has a session hash, the effect above handles it.
   useEffect(() => {
     const restoredId = useStore.getState().currentSessionId;
-    if (restoredId) {
-      connectSession(restoredId);
+    const currentRoute = parseHash(window.location.hash);
+    if (currentRoute.page === "home" && restoredId) {
+      navigateToSession(restoredId, true);
     }
   }, []);
 
@@ -66,7 +87,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  if (hash === "#/playground") {
+  if (route.page === "playground") {
     return <Playground />;
   }
 
