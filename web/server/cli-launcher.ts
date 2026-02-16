@@ -18,6 +18,24 @@ import {
   resolveCompanionCodexSessionHome,
 } from "./codex-home.js";
 
+function sanitizeSpawnArgsForLog(args: string[]): string {
+  const secretKeyPattern = /(token|key|secret|password)/i;
+  const out = [...args];
+  for (let i = 0; i < out.length; i++) {
+    if (out[i] === "-e" && i + 1 < out.length) {
+      const envPair = out[i + 1];
+      const eqIdx = envPair.indexOf("=");
+      if (eqIdx > 0) {
+        const k = envPair.slice(0, eqIdx);
+        if (secretKeyPattern.test(k)) {
+          out[i + 1] = `${k}=***`;
+        }
+      }
+    }
+  }
+  return out.join(" ");
+}
+
 export interface SdkSessionInfo {
   sessionId: string;
   pid?: number;
@@ -92,6 +110,8 @@ export interface LaunchOptions {
 export class CliLauncher {
   private sessions = new Map<string, SdkSessionInfo>();
   private processes = new Map<string, Subprocess>();
+  /** Runtime-only env vars per session (kept out of persisted launcher state). */
+  private sessionEnvs = new Map<string, Record<string, string>>();
   private port: number;
   private store: SessionStore | null = null;
   private recorder: RecorderManager | null = null;
@@ -197,6 +217,9 @@ export class CliLauncher {
     }
 
     this.sessions.set(sessionId, info);
+    if (options.env) {
+      this.sessionEnvs.set(sessionId, { ...options.env });
+    }
 
     if (backendType === "codex") {
       this.spawnCodex(sessionId, info, options);
@@ -233,6 +256,8 @@ export class CliLauncher {
 
     info.state = "starting";
 
+    const runtimeEnv = this.sessionEnvs.get(sessionId);
+
     if (info.backendType === "codex") {
       this.spawnCodex(sessionId, info, {
         model: info.model,
@@ -243,6 +268,7 @@ export class CliLauncher {
         containerId: info.containerId,
         containerName: info.containerName,
         containerImage: info.containerImage,
+        env: runtimeEnv,
       });
     } else {
       this.spawnCLI(sessionId, info, {
@@ -253,6 +279,7 @@ export class CliLauncher {
         containerId: info.containerId,
         containerName: info.containerName,
         containerImage: info.containerImage,
+        env: runtimeEnv,
       });
     }
     return true;
@@ -284,11 +311,33 @@ export class CliLauncher {
       }
     }
 
-    // When running inside a container, the SDK URL must use host.docker.internal
+    // Allow overriding the host alias used by containerized Claude sessions.
+    // Useful when host.docker.internal is unavailable in a given Docker setup.
+    const containerSdkHost = (process.env.COMPANION_CONTAINER_SDK_HOST || "host.docker.internal").trim()
+      || "host.docker.internal";
+
+    // When running inside a container, the SDK URL should target the host alias
     // so the CLI can connect back to the Hono server running on the host.
     const sdkUrl = isContainerized
-      ? `ws://host.docker.internal:${this.port}/ws/cli/${sessionId}`
+      ? `ws://${containerSdkHost}:${this.port}/ws/cli/${sessionId}`
       : `ws://localhost:${this.port}/ws/cli/${sessionId}`;
+
+    // Claude Code rejects bypassPermissions when running with root/sudo. Most
+    // container images run as root by default, so downgrade to acceptEdits unless
+    // explicitly forced.
+    let effectivePermissionMode = options.permissionMode;
+    if (
+      isContainerized
+      && options.permissionMode === "bypassPermissions"
+      && process.env.COMPANION_FORCE_BYPASS_IN_CONTAINER !== "1"
+    ) {
+      console.warn(
+        `[cli-launcher] Session ${sessionId}: downgrading container permission mode ` +
+        `from bypassPermissions to acceptEdits (set COMPANION_FORCE_BYPASS_IN_CONTAINER=1 to force bypass).`,
+      );
+      effectivePermissionMode = "acceptEdits";
+      info.permissionMode = "acceptEdits";
+    }
 
     const args: string[] = [
       "--sdk-url", sdkUrl,
@@ -301,8 +350,8 @@ export class CliLauncher {
     if (options.model) {
       args.push("--model", options.model);
     }
-    if (options.permissionMode) {
-      args.push("--permission-mode", options.permissionMode);
+    if (effectivePermissionMode) {
+      args.push("--permission-mode", effectivePermissionMode);
     }
     if (options.allowedTools) {
       for (const tool of options.allowedTools) {
@@ -322,9 +371,10 @@ export class CliLauncher {
     let spawnCwd: string | undefined;
 
     if (isContainerized) {
-      // Run CLI inside the container via docker exec.
+      // Run CLI inside the container via docker exec -i.
+      // Keeping stdin open avoids premature EOF-driven exits in SDK mode.
       // Environment variables are passed via -e flags to docker exec.
-      const dockerArgs = ["docker", "exec"];
+      const dockerArgs = ["docker", "exec", "-i"];
 
       // Pass env vars via -e flags
       if (options.env) {
@@ -354,7 +404,10 @@ export class CliLauncher {
       spawnCwd = info.cwd;
     }
 
-    console.log(`[cli-launcher] Spawning session ${sessionId}${isContainerized ? " (container)" : ""}: ${spawnCmd.join(" ")}`);
+    console.log(
+      `[cli-launcher] Spawning session ${sessionId}${isContainerized ? " (container)" : ""}: ` +
+      sanitizeSpawnArgsForLog(spawnCmd),
+    );
 
     const proc = Bun.spawn(spawnCmd, {
       cwd: spawnCwd,
@@ -518,7 +571,10 @@ export class CliLauncher {
       spawnCwd = info.cwd;
     }
 
-    console.log(`[cli-launcher] Spawning Codex session ${sessionId}${isContainerized ? " (container)" : ""}: ${spawnCmd.join(" ")}`);
+    console.log(
+      `[cli-launcher] Spawning Codex session ${sessionId}${isContainerized ? " (container)" : ""}: ` +
+      sanitizeSpawnArgsForLog(spawnCmd),
+    );
 
     const proc = Bun.spawn(spawnCmd, {
       cwd: spawnCwd,
@@ -683,6 +739,7 @@ export class CliLauncher {
   removeSession(sessionId: string) {
     this.sessions.delete(sessionId);
     this.processes.delete(sessionId);
+    this.sessionEnvs.delete(sessionId);
     this.persistState();
   }
 
@@ -694,6 +751,7 @@ export class CliLauncher {
     for (const [id, session] of this.sessions) {
       if (session.state === "exited") {
         this.sessions.delete(id);
+        this.sessionEnvs.delete(id);
         pruned++;
       }
     }

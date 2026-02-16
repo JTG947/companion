@@ -33,7 +33,6 @@ export function EnvManager({ onClose, embedded = false }: Props) {
   const [editDockerfile, setEditDockerfile] = useState("");
   const [editBaseImage, setEditBaseImage] = useState("");
   const [editPorts, setEditPorts] = useState<number[]>([]);
-  const [editTab, setEditTab] = useState<Tab>("variables");
   const [error, setError] = useState("");
 
   // Docker build state
@@ -78,7 +77,6 @@ export function EnvManager({ onClose, embedded = false }: Props) {
     setEditDockerfile(env.dockerfile || "");
     setEditBaseImage(env.baseImage || "");
     setEditPorts(env.ports || []);
-    setEditTab("variables");
     setError("");
     setBuildLog("");
     setShowBuildLog(false);
@@ -412,10 +410,20 @@ export function EnvManager({ onClose, embedded = false }: Props) {
                 placeholder="Environment name"
                 className="w-full px-3 py-2 text-sm bg-cc-input-bg border border-cc-border rounded-lg text-cc-fg placeholder:text-cc-muted focus:outline-none focus:border-cc-primary/50"
               />
-              {renderTabs(editTab, setEditTab)}
-              {editTab === "variables" && <VarEditor rows={editVars} onChange={setEditVars} />}
-              {editTab === "docker" && renderDockerTab(editDockerfile, setEditDockerfile, editBaseImage, setEditBaseImage, env.slug, env)}
-              {editTab === "ports" && renderPortsTab(editPorts, setEditPorts)}
+              <div className="space-y-3">
+                <div>
+                  <div className="text-[11px] font-medium text-cc-muted mb-1.5">Variables</div>
+                  <VarEditor rows={editVars} onChange={setEditVars} />
+                </div>
+                <div>
+                  <div className="text-[11px] font-medium text-cc-muted mb-1.5">Docker</div>
+                  {renderDockerTab(editDockerfile, setEditDockerfile, editBaseImage, setEditBaseImage, env.slug, env)}
+                </div>
+                <div>
+                  <div className="text-[11px] font-medium text-cc-muted mb-1.5">Ports</div>
+                  {renderPortsTab(editPorts, setEditPorts)}
+                </div>
+              </div>
               <button
                 onClick={saveEdit}
                 className="px-3 py-2 text-xs font-medium bg-cc-primary hover:bg-cc-primary-hover text-white rounded-lg transition-colors cursor-pointer"
@@ -429,10 +437,10 @@ export function EnvManager({ onClose, embedded = false }: Props) {
           {editingSlug !== env.slug && Object.keys(env.variables).length > 0 && (
             <div className="px-3 py-2.5 space-y-1">
               {Object.entries(env.variables).map(([k, v]) => (
-                <div key={k} className="flex items-center gap-1.5 text-xs leading-5">
-                  <span className="font-mono-code text-cc-fg">{k}</span>
+                <div key={k} className="grid grid-cols-[auto_auto_minmax(0,1fr)] items-start gap-1.5 text-xs leading-5">
+                  <span className="font-mono-code text-cc-fg break-all">{k}</span>
                   <span className="text-cc-muted">=</span>
-                  <span className="font-mono-code text-cc-muted truncate">{v}</span>
+                  <span className="font-mono-code text-cc-muted break-all whitespace-pre-wrap">{v}</span>
                 </div>
               ))}
             </div>

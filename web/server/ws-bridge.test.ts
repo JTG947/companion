@@ -198,8 +198,11 @@ describe("CLI handlers", () => {
     expect(calls).toContainEqual(expect.objectContaining({ type: "cli_connected" }));
   });
 
-  it("handleCLIOpen: flushes pending messages", () => {
-    // Send a user message before CLI connects
+  it("handleCLIOpen: flushes pending messages immediately", () => {
+    // Per the SDK protocol, the first user message triggers system.init,
+    // so queued messages must be flushed as soon as the CLI WebSocket connects
+    // (not deferred until system.init, which would create a deadlock for
+    // slow-starting sessions like Docker containers).
     const browser = makeBrowserSocket("s1");
     bridge.handleBrowserOpen(browser, "s1");
 
@@ -212,7 +215,7 @@ describe("CLI handlers", () => {
     const session = bridge.getSession("s1")!;
     expect(session.pendingMessages.length).toBe(1);
 
-    // Now connect CLI
+    // Now connect CLI — messages should be flushed immediately
     const cli = makeCliSocket("s1");
     bridge.handleCLIOpen(cli, "s1");
 
@@ -220,10 +223,43 @@ describe("CLI handlers", () => {
     expect(session.pendingMessages).toEqual([]);
     // The CLI socket should have received the queued message
     expect(cli.send).toHaveBeenCalled();
-    const sentData = cli.send.mock.calls[0][0] as string;
-    const parsed = JSON.parse(sentData.trim());
+    const sentCalls = cli.send.mock.calls.map(([arg]: [string]) => arg);
+    const userMsg = sentCalls.find((s: string) => s.includes('"type":"user"'));
+    expect(userMsg).toBeDefined();
+    const parsed = JSON.parse(userMsg!.trim());
     expect(parsed.type).toBe("user");
     expect(parsed.message.content).toBe("hello queued");
+  });
+
+  it("handleCLIMessage: system.init does not re-flush already-sent messages", () => {
+    // Messages are flushed on CLI connect, so by the time system.init
+    // arrives the queue should already be empty.
+    mockExecSync.mockImplementation(() => { throw new Error("not a git repo"); });
+
+    const browser = makeBrowserSocket("s1");
+    bridge.handleBrowserOpen(browser, "s1");
+
+    bridge.handleBrowserMessage(browser, JSON.stringify({
+      type: "user_message",
+      content: "hello queued",
+    }));
+
+    const session = bridge.getSession("s1")!;
+    expect(session.pendingMessages.length).toBe(1);
+
+    // Connect CLI — messages flushed immediately
+    const cli = makeCliSocket("s1");
+    bridge.handleCLIOpen(cli, "s1");
+    expect(session.pendingMessages).toEqual([]);
+    const sendCountAfterOpen = cli.send.mock.calls.length;
+
+    // Send system.init — no additional flush should happen
+    bridge.handleCLIMessage(cli, makeInitMsg());
+
+    // Verify no additional user messages were sent after system.init
+    const newCalls = cli.send.mock.calls.slice(sendCountAfterOpen);
+    const userMsgAfterInit = newCalls.find(([arg]: [string]) => arg.includes('"type":"user"'));
+    expect(userMsgAfterInit).toBeUndefined();
   });
 
   it("handleCLIMessage: parses NDJSON and routes system.init", () => {
@@ -297,11 +333,10 @@ describe("CLI handlers", () => {
     expect(state.skills).toEqual(["pdf"]);
   });
 
-  it("handleCLIMessage: system.init resolves git info via execSync (worktree)", () => {
+  it("handleCLIMessage: system.init resolves git info via execSync", () => {
     mockExecSync.mockImplementation((cmd: string) => {
       if (cmd.includes("--abbrev-ref HEAD")) return "feat/test-branch\n";
-      if (cmd.includes("--git-dir")) return "/repo/.git/worktrees/feat-test\n";
-      if (cmd.includes("--git-common-dir")) return "/repo/.git\n";
+      if (cmd.includes("--show-toplevel")) return "/repo\n";
       if (cmd.includes("--left-right --count")) return "2\t5\n";
       throw new Error("unknown git cmd");
     });
@@ -312,13 +347,12 @@ describe("CLI handlers", () => {
 
     const state = bridge.getSession("s1")!.state;
     expect(state.git_branch).toBe("feat/test-branch");
-    expect(state.is_worktree).toBe(true);
     expect(state.repo_root).toBe("/repo");
     expect(state.git_ahead).toBe(5);
     expect(state.git_behind).toBe(2);
   });
 
-  it("handleCLIMessage: system.init resolves repo_root via --show-toplevel for non-worktree", () => {
+  it("handleCLIMessage: system.init resolves repo_root via --show-toplevel for standard repo", () => {
     mockExecSync.mockImplementation((cmd: string) => {
       if (cmd.includes("--abbrev-ref HEAD")) return "main\n";
       if (cmd.includes("--git-dir")) return ".git\n";
@@ -332,27 +366,7 @@ describe("CLI handlers", () => {
     bridge.handleCLIMessage(cli, makeInitMsg({ cwd: "/home/user/myproject" }));
 
     const state = bridge.getSession("s1")!.state;
-    expect(state.is_worktree).toBe(false);
     expect(state.repo_root).toBe("/home/user/myproject");
-  });
-
-  it("handleCLIMessage: system.init resolves repo_root from relative --git-common-dir in worktree", () => {
-    mockExecSync.mockImplementation((cmd: string) => {
-      if (cmd.includes("--abbrev-ref HEAD")) return "feat/branch\n";
-      if (cmd.includes("--git-dir")) return "/original/.git/worktrees/branch\n";
-      if (cmd.includes("--git-common-dir")) return "../../original/.git\n";
-      if (cmd.includes("--left-right --count")) return "0\t0\n";
-      throw new Error("unknown git cmd");
-    });
-
-    const cli = makeCliSocket("s1");
-    bridge.handleCLIOpen(cli, "s1");
-    bridge.handleCLIMessage(cli, makeInitMsg());
-
-    const state = bridge.getSession("s1")!.state;
-    expect(state.is_worktree).toBe(true);
-    // cwd is "/test" (default), resolve("/test", "../../original/.git", "..") = "/original"
-    expect(state.repo_root).toBe("/original");
   });
 
   it("handleCLIMessage: system.status updates compacting and permissionMode", () => {
@@ -1323,7 +1337,7 @@ describe("Persistence", () => {
         context_used_percent: 15,
         is_compacting: false,
         git_branch: "main",
-        is_worktree: false,
+        is_containerized: false,
         repo_root: "/saved",
         git_ahead: 0,
         git_behind: 0,
@@ -1376,7 +1390,7 @@ describe("Persistence", () => {
         context_used_percent: 0,
         is_compacting: false,
         git_branch: "",
-        is_worktree: false,
+        is_containerized: false,
         repo_root: "",
         git_ahead: 0,
         git_behind: 0,
@@ -2050,7 +2064,7 @@ describe("Restore from disk with pendingPermissions", () => {
         context_used_percent: 0,
         is_compacting: false,
         git_branch: "",
-        is_worktree: false,
+        is_containerized: false,
         repo_root: "",
         git_ahead: 0,
         git_behind: 0,
@@ -2100,7 +2114,7 @@ describe("Restore from disk with pendingPermissions", () => {
         context_used_percent: 0,
         is_compacting: false,
         git_branch: "",
-        is_worktree: false,
+        is_containerized: false,
         repo_root: "",
         git_ahead: 0,
         git_behind: 0,
@@ -2157,7 +2171,7 @@ describe("Restore from disk with pendingPermissions", () => {
         context_used_percent: 0,
         is_compacting: false,
         git_branch: "",
-        is_worktree: false,
+        is_containerized: false,
         repo_root: "",
         git_ahead: 0,
         git_behind: 0,
@@ -2197,7 +2211,7 @@ describe("Restore from disk with pendingPermissions", () => {
         context_used_percent: 0,
         is_compacting: false,
         git_branch: "",
-        is_worktree: false,
+        is_containerized: false,
         repo_root: "",
         git_ahead: 0,
         git_behind: 0,
@@ -2627,7 +2641,7 @@ describe("onFirstTurnCompletedCallback", () => {
         context_used_percent: 10,
         is_compacting: false,
         git_branch: "",
-        is_worktree: false,
+        is_containerized: false,
         repo_root: "",
         git_ahead: 0,
         git_behind: 0,
@@ -2689,7 +2703,7 @@ describe("onFirstTurnCompletedCallback", () => {
         context_used_percent: 0,
         is_compacting: false,
         git_branch: "",
-        is_worktree: false,
+        is_containerized: false,
         repo_root: "",
         git_ahead: 0,
         git_behind: 0,

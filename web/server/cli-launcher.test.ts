@@ -104,6 +104,8 @@ let launcher: CliLauncher;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  delete process.env.COMPANION_CONTAINER_SDK_HOST;
+  delete process.env.COMPANION_FORCE_BYPASS_IN_CONTAINER;
   tempDir = mkdtempSync(join(tmpdir(), "launcher-test-"));
   store = new SessionStore(tempDir);
   launcher = new CliLauncher(3456);
@@ -174,6 +176,34 @@ describe("launch", () => {
     expect(cmdAndArgs[modeIdx + 1]).toBe("bypassPermissions");
   });
 
+  it("downgrades bypassPermissions to acceptEdits for containerized Claude sessions", () => {
+    launcher.launch({
+      cwd: "/tmp/project",
+      permissionMode: "bypassPermissions",
+      containerId: "abc123def456",
+      containerName: "companion-test",
+    });
+
+    const [cmdAndArgs] = mockSpawn.mock.calls[0];
+    const modeIdx = cmdAndArgs.indexOf("--permission-mode");
+    expect(modeIdx).toBeGreaterThan(-1);
+    expect(cmdAndArgs[modeIdx + 1]).toBe("acceptEdits");
+  });
+
+  it("uses COMPANION_CONTAINER_SDK_HOST for containerized sdk-url when set", () => {
+    process.env.COMPANION_CONTAINER_SDK_HOST = "172.17.0.1";
+    launcher.launch({
+      cwd: "/tmp/project",
+      containerId: "abc123def456",
+      containerName: "companion-test",
+    });
+
+    const [cmdAndArgs] = mockSpawn.mock.calls[0];
+    const sdkIdx = cmdAndArgs.indexOf("--sdk-url");
+    expect(sdkIdx).toBeGreaterThan(-1);
+    expect(cmdAndArgs[sdkIdx + 1]).toBe("ws://172.17.0.1:3456/ws/cli/test-session-id");
+  });
+
   it("passes --allowedTools for each tool", () => {
     launcher.launch({
       allowedTools: ["Read", "Write", "Bash"],
@@ -234,6 +264,19 @@ describe("launch", () => {
     expect(info.containerId).toBe("abc123def456");
     expect(info.containerName).toBe("companion-session-1");
     expect(info.containerImage).toBe("ubuntu:22.04");
+  });
+
+  it("uses docker exec -i for containerized Claude sessions", () => {
+    launcher.launch({
+      cwd: "/tmp/project",
+      containerId: "abc123def456",
+      containerName: "companion-session-1",
+    });
+
+    const [cmdAndArgs] = mockSpawn.mock.calls[0];
+    expect(cmdAndArgs[0]).toBe("docker");
+    expect(cmdAndArgs[1]).toBe("exec");
+    expect(cmdAndArgs[2]).toBe("-i");
   });
 
   it("sets session pid from spawned process", () => {
@@ -568,6 +611,35 @@ describe("relaunch", () => {
     await new Promise((r) => setTimeout(r, 10));
     const session = launcher.getSession("test-session-id");
     expect(session?.state).toBe("starting");
+  });
+
+  it("reuses launch env variables during relaunch", async () => {
+    let resolveFirst: (code: number) => void;
+    const firstProc = {
+      pid: 12345,
+      kill: vi.fn(() => { resolveFirst(0); }),
+      exited: new Promise<number>((r) => { resolveFirst = r; }),
+      stdout: null,
+      stderr: null,
+    };
+    mockSpawn.mockReturnValueOnce(firstProc);
+
+    launcher.launch({
+      cwd: "/tmp/project",
+      containerId: "abc123def456",
+      containerName: "companion-test",
+      env: { CLAUDE_CODE_OAUTH_TOKEN: "tok-test" },
+    });
+
+    const secondProc = createMockProc(54321);
+    mockSpawn.mockReturnValueOnce(secondProc);
+
+    const result = await launcher.relaunch("test-session-id");
+    expect(result).toBe(true);
+
+    const [relaunchCmd] = mockSpawn.mock.calls[1];
+    expect(relaunchCmd).toContain("-e");
+    expect(relaunchCmd).toContain("CLAUDE_CODE_OAUTH_TOKEN=tok-test");
   });
 
   it("returns false for unknown session", async () => {

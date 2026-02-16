@@ -249,7 +249,7 @@ process.on("SIGINT", gracefulShutdown);
 // After a server restart, restored CLI processes may not reconnect their
 // WebSocket. Give them a grace period, then kill + relaunch any that are
 // still in "starting" state (alive but no WS connection).
-const RECONNECT_GRACE_MS = 10_000;
+const RECONNECT_GRACE_MS = Number(process.env.COMPANION_RECONNECT_GRACE_MS || "30000");
 const starting = launcher.getStartingSessions();
 if (starting.length > 0) {
   console.log(`[server] Waiting ${RECONNECT_GRACE_MS / 1000}s for ${starting.length} CLI process(es) to reconnect...`);

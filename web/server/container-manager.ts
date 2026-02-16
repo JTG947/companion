@@ -46,6 +46,9 @@ const EXEC_OPTS: ExecSyncOptionsWithStringEncoding = {
   encoding: "utf-8",
   timeout: 30_000,
 };
+const QUICK_EXEC_TIMEOUT_MS = 8_000;
+const STANDARD_EXEC_TIMEOUT_MS = 30_000;
+const CONTAINER_BOOT_TIMEOUT_MS = 20_000;
 
 function exec(cmd: string, opts?: ExecSyncOptionsWithStringEncoding): string {
   return execSync(cmd, { ...EXEC_OPTS, ...opts }).trim();
@@ -61,7 +64,10 @@ export class ContainerManager {
   /** Check whether Docker daemon is reachable. */
   checkDocker(): boolean {
     try {
-      exec("docker info --format '{{.ServerVersion}}'");
+      exec("docker info --format '{{.ServerVersion}}'", {
+        encoding: "utf-8",
+        timeout: QUICK_EXEC_TIMEOUT_MS,
+      });
       return true;
     } catch {
       return false;
@@ -71,7 +77,10 @@ export class ContainerManager {
   /** Return Docker version string, or null if unavailable. */
   getDockerVersion(): string | null {
     try {
-      return exec("docker version --format '{{.Server.Version}}'");
+      return exec("docker version --format '{{.Server.Version}}'", {
+        encoding: "utf-8",
+        timeout: QUICK_EXEC_TIMEOUT_MS,
+      });
     } catch {
       return null;
     }
@@ -80,7 +89,10 @@ export class ContainerManager {
   /** List images available locally. Returns image:tag strings. */
   listImages(): string[] {
     try {
-      const raw = exec("docker images --format '{{.Repository}}:{{.Tag}}'");
+      const raw = exec("docker images --format '{{.Repository}}:{{.Tag}}'", {
+        encoding: "utf-8",
+        timeout: QUICK_EXEC_TIMEOUT_MS,
+      });
       if (!raw) return [];
       return raw
         .split("\n")
@@ -94,7 +106,10 @@ export class ContainerManager {
   /** Check if a specific image exists locally. */
   imageExists(image: string): boolean {
     try {
-      exec(`docker image inspect ${shellEscape(image)}`);
+      exec(`docker image inspect ${shellEscape(image)}`, {
+        encoding: "utf-8",
+        timeout: QUICK_EXEC_TIMEOUT_MS,
+      });
       return true;
     } catch {
       return false;
@@ -104,7 +119,8 @@ export class ContainerManager {
   /**
    * Create and start a container for a session.
    *
-   * - Mounts `~/.claude` read-only (auth)
+   * - Mounts `~/.claude` read-only at `/companion-host-claude` (auth seed)
+   * - Uses a writable tmpfs at `/root/.claude` for runtime state
    * - Mounts `hostCwd` at `/workspace`
    * - Publishes requested ports with auto-assigned host ports (`-p 0:PORT`)
    */
@@ -130,7 +146,9 @@ export class ContainerManager {
       // Ensure host.docker.internal resolves (automatic on Mac/Win Docker
       // Desktop, but required explicitly on Linux)
       "--add-host=host.docker.internal:host-gateway",
-      "-v", `${homedir}/.claude:/root/.claude:ro`,
+      // Seed auth/config from host home, but keep runtime writes inside container.
+      "-v", `${homedir}/.claude:/companion-host-claude:ro`,
+      "--tmpfs", "/root/.claude",
       "-v", `${hostCwd}:/workspace`,
       "-w", "/workspace",
     ];
@@ -169,12 +187,43 @@ export class ContainerManager {
 
     try {
       // Create
-      const containerId = exec(args.map(shellEscape).join(" "));
+      const containerId = exec(args.map(shellEscape).join(" "), {
+        encoding: "utf-8",
+        timeout: CONTAINER_BOOT_TIMEOUT_MS,
+      });
       info.containerId = containerId;
 
       // Start
-      exec(`docker start ${shellEscape(containerId)}`);
+      exec(`docker start ${shellEscape(containerId)}`, {
+        encoding: "utf-8",
+        timeout: CONTAINER_BOOT_TIMEOUT_MS,
+      });
       info.state = "running";
+
+      // Seed writable Claude home from host read-only mount.
+      // Only copy essential files (auth + settings + skills) to avoid
+      // copying large directories (projects/, sessions.db, statsig/) that
+      // can make container startup very slow.
+      try {
+        this.execInContainer(containerId, [
+          "sh",
+          "-lc",
+          [
+            "mkdir -p /root/.claude",
+            // Auth files
+            "for f in .credentials.json auth.json .auth.json credentials.json; do " +
+              "[ -f /companion-host-claude/$f ] && cp /companion-host-claude/$f /root/.claude/$f 2>/dev/null; done",
+            // Settings
+            "for f in settings.json settings.local.json; do " +
+              "[ -f /companion-host-claude/$f ] && cp /companion-host-claude/$f /root/.claude/$f 2>/dev/null; done",
+            // Skills directory (shallow copy)
+            "[ -d /companion-host-claude/skills ] && cp -r /companion-host-claude/skills /root/.claude/skills 2>/dev/null",
+            "true",
+          ].join("; "),
+        ]);
+      } catch {
+        // no-op
+      }
 
       // Resolve actual port mappings
       info.portMappings = this.resolvePortMappings(containerId, config.ports);
@@ -225,7 +274,7 @@ export class ContainerManager {
    * Execute a command inside a running container.
    * Returns the stdout output. Throws on failure.
    */
-  execInContainer(containerId: string, cmd: string[], timeout = 30_000): string {
+  execInContainer(containerId: string, cmd: string[], timeout = STANDARD_EXEC_TIMEOUT_MS): string {
     const dockerCmd = [
       "docker", "exec",
       shellEscape(containerId),

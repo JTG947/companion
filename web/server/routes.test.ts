@@ -4,6 +4,7 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 vi.mock("./env-manager.js", () => ({
   listEnvs: vi.fn(() => []),
   getEnv: vi.fn(() => null),
+  getEffectiveImage: vi.fn(() => null),
   createEnv: vi.fn(),
   updateEnv: vi.fn(),
   deleteEnv: vi.fn(),
@@ -89,6 +90,7 @@ import * as envManager from "./env-manager.js";
 import * as gitUtils from "./git-utils.js";
 import * as sessionNames from "./session-names.js";
 import * as settingsManager from "./settings-manager.js";
+import { containerManager } from "./container-manager.js";
 
 // ─── Mock factories ──────────────────────────────────────────────────────────
 
@@ -324,6 +326,72 @@ describe("POST /api/sessions/create", () => {
     expect(json.error).toContain("Invalid backend");
     expect(launcher.launch).not.toHaveBeenCalled();
   });
+
+  it("returns 503 when env has Docker image but container startup fails", async () => {
+    vi.mocked(envManager.getEnv).mockReturnValue({
+      name: "Companion",
+      slug: "companion",
+      variables: { CLAUDE_CODE_OAUTH_TOKEN: "token" },
+      baseImage: "companion-dev:latest",
+      createdAt: 1000,
+      updatedAt: 1000,
+    } as any);
+    vi.mocked(envManager.getEffectiveImage).mockReturnValue("companion-dev:latest");
+    vi.spyOn(containerManager, "imageExists").mockReturnValueOnce(true);
+    vi.spyOn(containerManager, "createContainer").mockImplementationOnce(() => {
+      throw new Error("docker daemon timeout");
+    });
+
+    const res = await app.request("/api/sessions/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: "/test", envSlug: "companion" }),
+    });
+
+    expect(res.status).toBe(503);
+    const json = await res.json();
+    expect(json.error).toContain("Docker is required");
+    expect(json.error).toContain("container startup failed");
+    expect(launcher.launch).not.toHaveBeenCalled();
+  });
+
+  it("auto-builds companion base image when missing locally", async () => {
+    vi.mocked(envManager.getEnv).mockReturnValue({
+      name: "Companion",
+      slug: "companion",
+      variables: { CLAUDE_CODE_OAUTH_TOKEN: "token" },
+      baseImage: "companion-dev:latest",
+      createdAt: 1000,
+      updatedAt: 1000,
+    } as any);
+    vi.mocked(envManager.getEffectiveImage).mockReturnValue("companion-dev:latest");
+    vi.mocked(existsSync).mockReturnValueOnce(true);
+    vi.spyOn(containerManager, "imageExists").mockReturnValueOnce(false);
+    const buildSpy = vi.spyOn(containerManager, "buildImage").mockReturnValue("ok");
+    vi.spyOn(containerManager, "createContainer").mockReturnValueOnce({
+      containerId: "cid-1",
+      name: "companion-temp",
+      image: "companion-dev:latest",
+      portMappings: [],
+      hostCwd: "/test",
+      containerCwd: "/workspace",
+      state: "running",
+    });
+    vi.spyOn(containerManager, "retrack").mockImplementation(() => {});
+
+    const res = await app.request("/api/sessions/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: "/test", envSlug: "companion" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(buildSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Dockerfile.companion-dev"),
+      "companion-dev:latest",
+    );
+    expect(launcher.launch).toHaveBeenCalled();
+  });
 });
 
 describe("GET /api/sessions", () => {
@@ -532,7 +600,16 @@ describe("POST /api/envs", () => {
     expect(res.status).toBe(201);
     const json = await res.json();
     expect(json).toEqual(created);
-    expect(envManager.createEnv).toHaveBeenCalledWith("Staging", { HOST: "staging.example.com" });
+    expect(envManager.createEnv).toHaveBeenCalledWith(
+      "Staging",
+      { HOST: "staging.example.com" },
+      {
+        dockerfile: undefined,
+        baseImage: undefined,
+        ports: undefined,
+        volumes: undefined,
+      },
+    );
   });
 
   it("returns 400 when createEnv throws", async () => {

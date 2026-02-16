@@ -3,6 +3,7 @@ import { execSync } from "node:child_process";
 import { resolveBinary } from "./path-resolver.js";
 import { readdir, readFile, writeFile, stat } from "node:fs/promises";
 import { resolve, join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { existsSync, readFileSync } from "node:fs";
 import type { CliLauncher } from "./cli-launcher.js";
@@ -15,6 +16,7 @@ import * as cronStore from "./cron-store.js";
 import * as gitUtils from "./git-utils.js";
 import * as sessionNames from "./session-names.js";
 import { containerManager, type ContainerConfig, type ContainerInfo } from "./container-manager.js";
+import { hasContainerClaudeAuth } from "./claude-container-auth.js";
 import { DEFAULT_OPENROUTER_MODEL, getSettings, updateSettings } from "./settings-manager.js";
 import { getUsageLimits } from "./usage-limits.js";
 import {
@@ -27,6 +29,8 @@ import { refreshServiceDefinition } from "./service.js";
 import type { AssistantManager } from "./assistant-manager.js";
 
 const UPDATE_CHECK_STALE_MS = 5 * 60 * 1000;
+const ROUTES_DIR = dirname(fileURLToPath(import.meta.url));
+const WEB_DIR = dirname(ROUTES_DIR);
 
 function execCaptureStdout(
   command: string,
@@ -143,8 +147,49 @@ export function createRoutes(
       let containerName: string | undefined;
       let containerImage: string | undefined;
 
-      // Create container if a Docker image is available and Docker is running
-      if (effectiveImage && containerManager.checkDocker()) {
+      // Claude inside Linux containers cannot use host keychain auth.
+      // Fail fast with a clear error when no container-compatible auth is present.
+      if (effectiveImage && backend === "claude" && !hasContainerClaudeAuth(envVars)) {
+        return c.json({
+          error:
+            "Containerized Claude requires auth available inside the container. " +
+            "Set ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN / CLAUDE_CODE_AUTH_TOKEN) in the selected environment.",
+        }, 400);
+      }
+
+      // Create container if a Docker image is available.
+      // Do not silently fall back to host execution: if container startup fails,
+      // return an explicit error.
+      if (effectiveImage) {
+        if (!containerManager.imageExists(effectiveImage)) {
+          if (effectiveImage === "companion-dev:latest") {
+            const dockerfilePath = join(WEB_DIR, "docker", "Dockerfile.companion-dev");
+            if (!existsSync(dockerfilePath)) {
+              return c.json({
+                error:
+                  "Docker image companion-dev:latest is missing and base Dockerfile was not found at " +
+                  dockerfilePath,
+              }, 503);
+            }
+            try {
+              console.log("[routes] companion-dev:latest missing, building image automatically...");
+              containerManager.buildImage(dockerfilePath, "companion-dev:latest");
+            } catch (err) {
+              const reason = err instanceof Error ? err.message : String(err);
+              return c.json({
+                error:
+                  "Docker image companion-dev:latest is missing and auto-build failed: " + reason,
+              }, 503);
+            }
+          } else {
+            return c.json({
+              error:
+                `Docker image not found locally: ${effectiveImage}. ` +
+                "Build/pull the image first, then retry.",
+            }, 503);
+          }
+        }
+
         const tempId = crypto.randomUUID().slice(0, 8);
         const cConfig: ContainerConfig = {
           image: effectiveImage,
@@ -155,21 +200,22 @@ export function createRoutes(
           volumes: companionEnv?.volumes ?? body.container?.volumes,
           env: envVars,
         };
-        containerInfo = containerManager.createContainer(tempId, cwd, cConfig);
+        try {
+          containerInfo = containerManager.createContainer(tempId, cwd, cConfig);
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err);
+          return c.json({
+            error:
+              `Docker is required to run this environment image (${effectiveImage}) ` +
+              `but container startup failed: ${reason}`,
+          }, 503);
+        }
         containerId = containerInfo.containerId;
         containerName = containerInfo.name;
         containerImage = effectiveImage;
-
-        // If branch requested, checkout inside the container
-        if (body.branch) {
-          try {
-            containerManager.execInContainer(containerInfo.containerId, [
-              "git", "checkout", body.branch,
-            ]);
-          } catch (e) {
-            console.warn(`[routes] git checkout inside container failed (non-fatal):`, e);
-          }
-        }
+        // Note: we intentionally do NOT run git checkout inside the container.
+        // The container uses a bind mount of hostCwd at /workspace, so the host
+        // checkout state is already visible inside the container.
       }
 
       const session = launcher.launch({
@@ -387,7 +433,7 @@ export function createRoutes(
 
   api.get("/containers/status", (c) => {
     const available = containerManager.checkDocker();
-    const version = containerManager.getDockerVersion();
+    const version = available ? containerManager.getDockerVersion() : null;
     return c.json({ available, version });
   });
 
@@ -734,7 +780,7 @@ export function createRoutes(
   api.post("/docker/build-base", async (c) => {
     if (!containerManager.checkDocker()) return c.json({ error: "Docker is not available" }, 503);
     // Build the companion-dev base image from the repo's Dockerfile
-    const dockerfilePath = join(dirname(import.meta.dir), "docker", "Dockerfile.companion-dev");
+    const dockerfilePath = join(WEB_DIR, "docker", "Dockerfile.companion-dev");
     if (!existsSync(dockerfilePath)) {
       return c.json({ error: "Base Dockerfile not found at " + dockerfilePath }, 404);
     }

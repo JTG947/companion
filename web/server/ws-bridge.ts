@@ -117,19 +117,19 @@ function resolveGitInfo(state: SessionState): void {
   // Preserve is_containerized — it's set during session launch, not derived from git
   const wasContainerized = state.is_containerized;
   try {
-    state.git_branch = execSync("git rev-parse --abbrev-ref HEAD", {
+    state.git_branch = execSync("git rev-parse --abbrev-ref HEAD 2>/dev/null", {
       cwd: state.cwd, encoding: "utf-8", timeout: 3000,
     }).trim();
 
     try {
-      state.repo_root = execSync("git rev-parse --show-toplevel", {
+      state.repo_root = execSync("git rev-parse --show-toplevel 2>/dev/null", {
         cwd: state.cwd, encoding: "utf-8", timeout: 3000,
       }).trim();
     } catch { /* ignore */ }
 
     try {
       const counts = execSync(
-        "git rev-list --left-right --count @{upstream}...HEAD",
+        "git rev-list --left-right --count @{upstream}...HEAD 2>/dev/null",
         { cwd: state.cwd, encoding: "utf-8", timeout: 3000 },
       ).trim();
       const [behind, ahead] = counts.split(/\s+/).map(Number);
@@ -531,13 +531,17 @@ export class WsBridge {
     console.log(`[ws-bridge] CLI connected for session ${sessionId}`);
     this.broadcastToBrowsers(session, { type: "cli_connected" });
 
-    // Flush any messages that were queued while waiting for CLI to connect
+    // Flush any messages queued while waiting for the CLI WebSocket.
+    // Per the SDK protocol, the first user message triggers system.init,
+    // so we must send it as soon as the WebSocket is open — NOT wait for
+    // system.init (which would create a deadlock for slow-starting sessions
+    // like Docker containers where the user message arrives before CLI connects).
     if (session.pendingMessages.length > 0) {
-      console.log(`[ws-bridge] Flushing ${session.pendingMessages.length} queued message(s) for session ${sessionId}`);
-      for (const ndjson of session.pendingMessages) {
+      console.log(`[ws-bridge] Flushing ${session.pendingMessages.length} queued message(s) on CLI connect for session ${sessionId}`);
+      const queued = session.pendingMessages.splice(0);
+      for (const ndjson of queued) {
         this.sendToCLI(session, ndjson);
       }
-      session.pendingMessages = [];
     }
   }
 
@@ -749,6 +753,16 @@ export class WsBridge {
         session: session.state,
       });
       this.persistSession(session);
+
+      // Flush any messages queued before CLI was initialized (e.g. user sent
+      // a message while the container was still starting up).
+      if (session.pendingMessages.length > 0) {
+        console.log(`[ws-bridge] Flushing ${session.pendingMessages.length} queued message(s) after init for session ${session.id}`);
+        const queued = session.pendingMessages.splice(0);
+        for (const ndjson of queued) {
+          this.sendToCLI(session, ndjson);
+        }
+      }
     } else if (msg.subtype === "status") {
       session.state.is_compacting = msg.status === "compacting";
 
