@@ -263,9 +263,15 @@ export function createRoutes(
               { timeout: initTimeout },
             );
             if (result.exitCode !== 0) {
+              console.error(
+                `[routes] Init script failed for env "${companionEnv.name}" (exit ${result.exitCode}):\n${result.output}`,
+              );
               containerManager.removeContainer(tempId);
+              const truncated = result.output.length > 2000
+                ? result.output.slice(0, 500) + "\n...[truncated]...\n" + result.output.slice(-1500)
+                : result.output;
               return c.json({
-                error: `Init script failed (exit ${result.exitCode}):\n${result.output.slice(-2000)}`,
+                error: `Init script failed (exit ${result.exitCode}):\n${truncated}`,
               }, 503);
             }
             console.log(`[routes] Init script completed successfully for env "${companionEnv.name}"`);

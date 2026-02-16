@@ -201,30 +201,7 @@ export class ContainerManager {
       });
       info.state = "running";
 
-      // Seed writable Claude home from host read-only mount.
-      // Only copy essential files (auth + settings + skills) to avoid
-      // copying large directories (projects/, sessions.db, statsig/) that
-      // can make container startup very slow.
-      try {
-        this.execInContainer(containerId, [
-          "sh",
-          "-lc",
-          [
-            "mkdir -p /root/.claude",
-            // Auth files
-            "for f in .credentials.json auth.json .auth.json credentials.json; do " +
-              "[ -f /companion-host-claude/$f ] && cp /companion-host-claude/$f /root/.claude/$f 2>/dev/null; done",
-            // Settings
-            "for f in settings.json settings.local.json; do " +
-              "[ -f /companion-host-claude/$f ] && cp /companion-host-claude/$f /root/.claude/$f 2>/dev/null; done",
-            // Skills directory (shallow copy)
-            "[ -d /companion-host-claude/skills ] && cp -r /companion-host-claude/skills /root/.claude/skills 2>/dev/null",
-            "true",
-          ].join("; "),
-        ]);
-      } catch {
-        // no-op
-      }
+      this.seedAuthFiles(containerId);
 
       // Resolve actual port mappings
       info.portMappings = this.resolvePortMappings(containerId, config.ports);
@@ -244,6 +221,31 @@ export class ContainerManager {
         `Failed to create container: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
+  }
+
+  /**
+   * Copy auth & config files from the read-only bind mount into the tmpfs home dir.
+   * Called after both initial create and restart (tmpfs is wiped on stop).
+   *
+   * Uses semicolons (not &&) deliberately: individual file copies are best-effort
+   * because not all auth files exist on every system. The trailing `true` ensures
+   * the overall exec succeeds even when some `cp` commands fail for missing files.
+   */
+  private seedAuthFiles(containerId: string): void {
+    try {
+      this.execInContainer(containerId, [
+        "sh", "-lc",
+        [
+          "mkdir -p /root/.claude",
+          "for f in .credentials.json auth.json .auth.json credentials.json; do " +
+            "[ -f /companion-host-claude/$f ] && cp /companion-host-claude/$f /root/.claude/$f 2>/dev/null; done",
+          "for f in settings.json settings.local.json; do " +
+            "[ -f /companion-host-claude/$f ] && cp /companion-host-claude/$f /root/.claude/$f 2>/dev/null; done",
+          "[ -d /companion-host-claude/skills ] && cp -r /companion-host-claude/skills /root/.claude/skills 2>/dev/null",
+          "true",
+        ].join("; "),
+      ]);
+    } catch { /* best-effort — container may not have /companion-host-claude mounted */ }
   }
 
   /** Parse `docker port` output to get host port mappings. */
@@ -414,13 +416,14 @@ export class ContainerManager {
     return Array.from(this.containers.values());
   }
 
-  /** Attempt to start a stopped container. Throws on failure. */
+  /** Attempt to start a stopped container. Re-seeds auth files (tmpfs is wiped on stop). */
   startContainer(containerId: string): void {
     validateContainerId(containerId);
     exec(`docker start ${shellEscape(containerId)}`, {
       encoding: "utf-8",
       timeout: CONTAINER_BOOT_TIMEOUT_MS,
     });
+    this.seedAuthFiles(containerId);
   }
 
   /**
