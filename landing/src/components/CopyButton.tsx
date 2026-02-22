@@ -1,3 +1,6 @@
+/**  
+ * landing/src/components/CopyButton.tsx 
+ * */
 import { useState } from "react";
 
 export function CopyButton({ text }: { text: string }) {

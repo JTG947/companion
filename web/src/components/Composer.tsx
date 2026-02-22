@@ -1,3 +1,4 @@
+/** web/src/components/Composer.tsx */
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useStore } from "../store.js";
 import { sendToSession } from "../ws.js";

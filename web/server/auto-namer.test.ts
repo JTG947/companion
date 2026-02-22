@@ -1,3 +1,4 @@
+/** web/server/auto-namer.test.ts */
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
 vi.mock("./settings-manager.js", () => ({

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # =============================================================================
-# landing-start.sh — Idempotent landing page bootstrap
+# scripts/landing-start.sh — Idempotent landing page bootstrap
 #
 # Usage: ./scripts/landing-start.sh          Start/verify landing site
 #        ./scripts/landing-start.sh --stop   Stop the landing site

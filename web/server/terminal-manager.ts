@@ -1,3 +1,4 @@
+/** web/server/terminal-manager.ts */
 import type { ServerWebSocket } from "bun";
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";

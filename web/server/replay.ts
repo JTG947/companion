@@ -1,6 +1,8 @@
 /**
+ * web/server/replay.ts
+ * 
  * Replay utility for session recordings.
- *
+ * 
  * Loads JSONL recording files and replays them through WsBridge or CodexAdapter
  * to produce browser messages. Used in tests to validate that message processing
  * produces the expected output from recorded real sessions.

@@ -1,3 +1,4 @@
+/** web/server/session-names.ts */
 import {
   mkdirSync,
   readFileSync,

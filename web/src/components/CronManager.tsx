@@ -1,3 +1,4 @@
+/** web/src/components/CronManager.tsx */
 import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { api, type CronJobInfo } from "../api.js";

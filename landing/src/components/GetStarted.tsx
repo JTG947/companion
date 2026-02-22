@@ -1,3 +1,6 @@
+/** 
+ * landing/src/components/GetStarted.tsx 
+ * */
 import { FadeIn } from "./FadeIn";
 import { InstallBlock } from "./InstallBlock";
 

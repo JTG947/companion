@@ -1,3 +1,4 @@
+/** web/src/components/DiffViewer.tsx */
 import { useMemo } from "react";
 import * as Diff from "diff";
 

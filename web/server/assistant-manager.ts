@@ -1,3 +1,6 @@
+/**
+ * web/server/assistant-manager.ts
+ */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -8,6 +11,7 @@ import * as sessionNames from "./session-names.js";
 const ASSISTANT_DIR = join(homedir(), ".companion", "assistant");
 const CONFIG_PATH = join(ASSISTANT_DIR, "config.json");
 const CLAUDE_MD_PATH = join(ASSISTANT_DIR, "CLAUDE.md");
+// const GIDEON_MD_PATH = join(ASSISTANT_DIR, "GIDEON.md")
 
 /** How long to wait for the CLI to connect after launch (ms) */
 const CLI_CONNECT_TIMEOUT_MS = 30_000;
@@ -161,7 +165,7 @@ export class AssistantManager {
   private saveConfig(): void {
     try {
       mkdirSync(ASSISTANT_DIR, { recursive: true });
-      writeFileSync(CONFIG_PATH, JSON.stringify(this.config, null, 2));
+        writeFileSync(CONFIG_PATH, JSON.stringify(this.config, null, 2));
     } catch (e) {
       console.warn("[assistant] Failed to save config:", e);
     }
@@ -208,7 +212,7 @@ export class AssistantManager {
     this.saveConfig();
 
     // Name the session
-    sessionNames.setName(session.sessionId, "Companion");
+    sessionNames.setName(session.sessionId, "Gideon");
 
     try {
       await this.waitForCLIConnection(session.sessionId);
@@ -216,7 +220,7 @@ export class AssistantManager {
       // Send the initial greeting
       this.wsBridge.injectUserMessage(
         session.sessionId,
-        "You are the Companion. Say a brief hello and let the user know what you can help with (managing sessions, environments, scheduled tasks, and coding workflows). Keep it to 2-3 sentences.",
+        "You are Gideon. Say a brief hello and let the user know what you can help with (managing sessions, environments, scheduled tasks, and coding workflows). Keep it to 2-3 sentences.",
       );
 
       console.log("[assistant] Assistant session started:", session.sessionId);

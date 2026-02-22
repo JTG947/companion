@@ -1,5 +1,5 @@
 // Types for the WebSocket bridge between Claude Code CLI and the browser
-
+/** web/server/session-types.ts */
 // ─── CLI Message Types (NDJSON from Claude Code CLI) ──────────────────────────
 
 export interface CLISystemInitMessage {

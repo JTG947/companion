@@ -1,3 +1,6 @@
+/** 
+ * landing/src/components/Nav.tsx 
+ * */
 import { ClawdLogo } from "./ClawdLogo";
 
 export function Nav() {

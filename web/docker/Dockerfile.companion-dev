@@ -1,5 +1,7 @@
 # Companion Dev — full-stack development image for The Companion
 # Includes: bun, node, git, python, docker CLI, gh CLI, make, curl, jq
+# 
+#  web/docker/Dockerfile.companion-dev
 #
 # Build:  docker build -t companion-dev:latest -f Dockerfile.companion-dev .
 # Usage:  Automatically used by The Companion when creating containerized sessions

@@ -1,4 +1,8 @@
 #!/usr/bin/env bun
+/** 
+ * web/bin/cli.ts 
+ * */ 
+
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 

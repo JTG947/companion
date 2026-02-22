@@ -1,3 +1,4 @@
+/** web/src/components/MessageBubble.tsx */
 import { useState, useMemo, type ComponentProps } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";

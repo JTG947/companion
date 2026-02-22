@@ -1,3 +1,6 @@
+/** 
+ * landing/src/components/Screenshot.tsx 
+ * */
 import { FadeIn } from "./FadeIn";
 
 export function Screenshot() {

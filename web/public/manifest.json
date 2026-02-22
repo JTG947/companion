@@ -1,7 +1,7 @@
 {
-  "name": "The Companion",
-  "short_name": "Companion",
-  "description": "Web UI for Claude Code and Codex",
+  "name": "Gideon",
+  "short_name": "Gideon",
+  "description": "Web UI for Gideon Code",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -15,9 +15,9 @@
       "purpose": "any"
     },
     {
-      "src": "/icon-512.png",
+      "src": "/aethyron.svg",
       "sizes": "512x512",
-      "type": "image/png",
+      "type": "image/svg",
       "purpose": "any"
     }
   ]

@@ -1,3 +1,4 @@
+/** web/server/recorder.ts */
 import { mkdirSync, readdirSync, appendFileSync, statSync, unlinkSync, readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";

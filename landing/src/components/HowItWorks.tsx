@@ -1,3 +1,6 @@
+/**
+ * landing/src/components/HowItWorks.tsx 
+ * */
 import { FadeIn } from "./FadeIn";
 
 export function HowItWorks() {

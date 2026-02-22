@@ -1,3 +1,6 @@
+/** 
+ * landing/src/App.tsx 
+ * */
 import { Nav } from "./components/Nav";
 import { Hero } from "./components/Hero";
 import { Screenshot } from "./components/Screenshot";

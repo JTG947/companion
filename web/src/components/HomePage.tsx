@@ -1,3 +1,4 @@
+/** web/src/components/HomePage.tsx */
 import { useState, useRef, useEffect } from "react";
 import { useStore } from "../store.js";
 import { api, createSessionStream, type CompanionEnv, type GitRepoInfo, type GitBranchInfo, type BackendInfo } from "../api.js";
@@ -186,7 +187,7 @@ export function HomePage() {
 
   const selectedModel = MODELS.find((m) => m.value === model) || MODELS[0];
   const selectedMode = MODES.find((m) => m.value === mode) || MODES[0];
-  const logoSrc = backend === "codex" ? "/logo-codex.svg" : "/logo.svg";
+  const logoSrc = backend === "codex" ? "/aethyron.svg" : "/aethyron.svg";
   const dirLabel = cwd ? cwd.split("/").pop() || cwd : "Select folder";
 
   async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
@@ -406,9 +407,9 @@ export function HomePage() {
       <div className="w-full max-w-2xl">
         {/* Logo + Title */}
         <div className="flex flex-col items-center justify-center mb-4 sm:mb-6">
-          <img src={logoSrc} alt="The Companion" className="w-24 h-24 sm:w-32 sm:h-32 mb-3" />
+          <img src={logoSrc} alt="Gideon" className="w-24 h-24 sm:w-32 sm:h-32 mb-3" />
           <h1 className="text-xl sm:text-2xl font-semibold text-cc-fg">
-            The Companion
+            Gideon
           </h1>
         </div>
 

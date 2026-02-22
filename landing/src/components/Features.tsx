@@ -1,3 +1,6 @@
+/** 
+ * landing/src/components/Features.tsx
+ * */
 import { FadeIn } from "./FadeIn";
 
 const features = [

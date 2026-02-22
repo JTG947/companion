@@ -1,3 +1,4 @@
+/** web/server/claude-container-auth.test.ts */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

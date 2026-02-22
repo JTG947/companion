@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 /**
+ * scripts/audit-recordings.ts
  * Audit script for raw protocol recordings.
  *
  * Analyzes JSONL files in ~/.companion/recordings/ and reports:

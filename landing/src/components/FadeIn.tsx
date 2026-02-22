@@ -1,3 +1,6 @@
+/**  
+ * landing/src/components/FadeIn.tsx 
+ * */
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 export function FadeIn({ children, className = "" }: { children: ReactNode; className?: string }) {

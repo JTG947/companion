@@ -1,3 +1,6 @@
+/** 
+ * landing/src/components/InstallBlock.tsx 
+ * */
 import { CopyButton } from "./CopyButton";
 
 const COMMAND = "bunx the-companion";

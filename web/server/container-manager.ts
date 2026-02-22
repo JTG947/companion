@@ -1,3 +1,4 @@
+/** web/server/container-manager.ts */
 import { execSync, type ExecSyncOptionsWithStringEncoding } from "node:child_process";
 import {
   existsSync,

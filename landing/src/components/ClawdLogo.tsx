@@ -1,3 +1,6 @@
+/** 
+ * landing/src/components/ClawdLogo.tsx 
+ * */
 export function ClawdLogo({ size = 28 }: { size?: number }) {
   const height = Math.round(size * (38 / 47));
   return (

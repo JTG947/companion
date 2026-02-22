@@ -1,3 +1,4 @@
+/** web/server/pr-poller.ts */
 import { fetchPRInfoAsync, computeAdaptiveTTL, type GitHubPRInfo } from "./github-pr.js";
 import type { WsBridge } from "./ws-bridge.js";
 

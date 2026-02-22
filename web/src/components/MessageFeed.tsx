@@ -1,3 +1,4 @@
+/** web/src/components/MessageFeed.tsx */
 import { useEffect, useRef, useMemo, useState, useCallback } from "react";
 import { useStore } from "../store.js";
 import { MessageBubble } from "./MessageBubble.js";

@@ -1,3 +1,4 @@
+/** web/src/components/PermissionBanner.tsx */
 import { useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";

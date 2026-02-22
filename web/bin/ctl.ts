@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 /**
+ * web/bin/ctl.ts
  * CLI handler module for `companion` management subcommands.
  * Each subcommand maps 1:1 to a Companion REST API endpoint.
  * All output is JSON to stdout for easy parsing by both humans and AI agents.

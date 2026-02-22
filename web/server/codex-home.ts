@@ -1,3 +1,4 @@
+/** web/server/codex-home.ts*/
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 

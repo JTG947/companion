@@ -1,3 +1,4 @@
+/** web/src/components/DiffPanel.tsx */
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useStore } from "../store.js";
 import { api } from "../api.js";

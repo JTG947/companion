@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # =============================================================================
-# dev-start.sh — Idempotent dev environment bootstrap
+# scripts/dev-start.sh — Idempotent dev environment bootstrap
 #
 # Usage: ./scripts/dev-start.sh          Start/verify dev servers
 #        ./scripts/dev-start.sh --stop   Stop all dev servers

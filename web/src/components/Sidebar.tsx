@@ -245,7 +245,7 @@ export function Sidebar() {
   const cronSessions = allSessionList.filter((s) => !s.archived && s.id !== assistantSessionId && !!s.cronJobId);
   const archivedSessions = allSessionList.filter((s) => s.archived && s.id !== assistantSessionId);
   const currentSession = currentSessionId ? allSessionList.find((s) => s.id === currentSessionId) : null;
-  const logoSrc = currentSession?.backendType === "codex" ? "/logo-codex.svg" : "/logo.svg";
+  const logoSrc = currentSession?.backendType === "codex" ? "/aethyron.svg" : "/aethyron.svg";
   const [showCronSessions, setShowCronSessions] = useState(true);
 
   // Group active sessions by project
@@ -276,7 +276,7 @@ export function Sidebar() {
       <div className="p-4 pb-3">
         <div className="flex items-center gap-2 mb-4">
           <img src={logoSrc} alt="" className="w-7 h-7" />
-          <span className="text-sm font-semibold text-cc-fg tracking-tight">The Companion</span>
+          <span className="text-sm font-semibold text-cc-fg tracking-tight">Gideon</span>
         </div>
 
         <button
@@ -334,7 +334,7 @@ export function Sidebar() {
 
               {/* Label + subtitle */}
               <div className="flex flex-col min-w-0">
-                <span className="text-[13px] font-semibold leading-tight tracking-tight">Companion</span>
+                <span className="text-[13px] font-semibold leading-tight tracking-tight">Gideon</span>
                 {isAlive ? (
                   <span className="text-[10px] text-cc-success leading-tight mt-0.5 flex items-center gap-1">
                     <span className="w-1 h-1 rounded-full bg-cc-success inline-block" />

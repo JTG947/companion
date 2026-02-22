@@ -1,3 +1,4 @@
+/** web/server/codex-container-auth.ts */
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";

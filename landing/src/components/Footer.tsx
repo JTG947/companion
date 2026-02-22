@@ -1,3 +1,6 @@
+/** 
+ * landing/src/components/Footer.tsx 
+ * */
 export function Footer() {
   return (
     <footer className="relative z-10 border-t border-cc-border py-10 px-5 sm:px-7 text-center text-sm text-cc-muted">

@@ -1,3 +1,4 @@
+/** web/src/components/Playground.tsx */
 import { useState, useEffect } from "react";
 import { PermissionBanner } from "./PermissionBanner.js";
 import { MessageBubble } from "./MessageBubble.js";

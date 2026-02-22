@@ -1,6 +1,7 @@
 /**
  * PATH discovery and binary resolution for service environments.
- *
+ * 
+ * web/server/path-resolver.ts
  * When The Companion runs as a macOS launchd or Linux systemd service, it inherits
  * a restricted PATH that omits directories from version managers (nvm, fnm, volta,
  * mise, etc.) and user-local installs (~/.local/bin, ~/.cargo/bin). This module

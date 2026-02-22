@@ -1,3 +1,4 @@
+/** web/src/components/AppErrorBoundary.tsx */
 import type { ErrorInfo, ReactNode } from "react";
 import { Component } from "react";
 import { captureException } from "../analytics.js";

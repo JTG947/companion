@@ -1,3 +1,4 @@
+/** web/src/components/ChatView.tsx */
 import { useMemo } from "react";
 import { useStore } from "../store.js";
 import { api } from "../api.js";

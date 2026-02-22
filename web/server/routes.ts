@@ -1,3 +1,4 @@
+/** web/server/routes.ts */
 import { Hono } from "hono";
 import { streamSSE, type SSEStreamingApi } from "hono/streaming";
 import { execSync } from "node:child_process";

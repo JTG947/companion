@@ -1,3 +1,4 @@
+/** web/src/components/EnvManager.tsx */
 import { useState, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { api, type CompanionEnv } from "../api.js";

@@ -1,3 +1,4 @@
+/** web/server/ws-bridge.ts */
 import type { ServerWebSocket } from "bun";
 import { randomUUID } from "node:crypto";
 import { execSync } from "node:child_process";
@@ -1198,7 +1199,16 @@ export class WsBridge {
       request_id: randomUUID(),
       request: { subtype: "interrupt" },
     });
-    this.sendToCLI(session, ndjson);
+    this.sendToCLI(session, ndjson)
+  // ── Codex adapter attachment ────────────────────────────────────────────
+
+  /**
+   * Attach a CodexAdapter to a session. The adapter handles all message
+   * translation between the Codex app-server (stdio JSON-RPC) and the
+   * browser WebSocket protocol.
+   */
+  attachCodexAdapter(sessionId: any, adapter: any) {
+    this.codexAdapters.set(sessionId, adapter);
   }
 
   private handleSetModel(session: Session, model: string) {

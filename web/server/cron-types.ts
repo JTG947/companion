@@ -1,3 +1,4 @@
+/** web/server/cron-types.ts */
 // ─── Cron Job Types ────────────────────────────────────────────────────────
 
 export interface CronJob {

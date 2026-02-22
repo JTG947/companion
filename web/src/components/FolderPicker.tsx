@@ -1,3 +1,4 @@
+/** web/src/components/FolderPicker.tsx */
 import { useState, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { api, type DirEntry } from "../api.js";

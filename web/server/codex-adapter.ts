@@ -1,6 +1,8 @@
 /**
  * Codex App-Server Adapter
- *
+ * 
+ * web/server/codex-adapter.ts
+ * 
  * Translates between the Codex app-server JSON-RPC protocol (stdin/stdout)
  * and The Companion's BrowserIncomingMessage/BrowserOutgoingMessage types.
  *
@@ -510,8 +512,8 @@ export class CodexAdapter {
       // Step 1: Send initialize request
       const result = await this.transport.call("initialize", {
         clientInfo: {
-          name: "thecompanion",
-          title: "The Companion",
+          name: "Gideon",
+          title: "Gideon",
           version: "1.0.0",
         },
         capabilities: {

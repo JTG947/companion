@@ -1,3 +1,4 @@
+/** web/server/auto-namer.ts */
 import { DEFAULT_OPENROUTER_MODEL, getSettings } from "./settings-manager.js";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";

@@ -1,3 +1,4 @@
+/** web/server/settings-manager.ts */
 import {
   mkdirSync,
   readFileSync,

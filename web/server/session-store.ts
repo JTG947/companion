@@ -1,3 +1,4 @@
+/** web/server/session-store.ts */
 import { mkdirSync, readdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";

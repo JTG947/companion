@@ -1,3 +1,4 @@
+/** web/server/github-pr.ts */
 import { execFileSync, execSync } from "node:child_process";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
